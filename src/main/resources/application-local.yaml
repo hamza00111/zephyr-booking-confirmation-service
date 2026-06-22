@@ -1,0 +1,50 @@
+# Spring profile: local  (the file name scopes every key below to the "local" profile)
+#
+# Run the service against a throwaway local stack — podman Oracle 23ai
+# "oracle-free" (PDB service name: zephyr_pdb) + a local Kafka broker. Activate with:
+#   mvn spring-boot:run -Dspring-boot.run.profiles=local
+#   # or: SPRING_PROFILES_ACTIVE=local java -jar target/*.jar
+#
+# The base application.yaml is fully env-var driven; this file only supplies the
+# datasource (the sole values with no built-in default) plus a few local niceties.
+#
+# WARNING: the credentials below are LOCAL CONTAINER throwaway values only.
+# Real environments MUST inject ZEPHYR_DB_* / KAFKA_* / *_SSL_* via environment
+# variables — never put production secrets in a committed file.
+
+spring:
+  datasource:
+    # Oracle service-name form: //host:port/<PDB service name>
+    url: jdbc:oracle:thin:@//localhost:1521/zephyr_pdb
+    username: ZEPHYR
+    password: Zephyr_123
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 1
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      # Distinct group so local runs don't disturb a shared/remote group's offsets.
+      group-id: zephyr-booking-confirmation-service-local
+      auto-offset-reset: earliest
+
+server:
+  # Stable local port (base defaults SERVER_PORT to 0 = random).
+  # Swagger UI: http://localhost:8080/booking-confirmation/swagger-ui.html
+  port: 8080
+
+logging:
+  level:
+    com.bnpparibas.dec.bookingconfirmation: DEBUG
+    org.apache.kafka.clients: WARN
+
+# If your local broker only has the AMER topics, silence unknown-topic noise by
+# disabling the other regions (uncomment):
+# app:
+#   booking-confirmation:
+#     regions:
+#       APAC:
+#         active: false
+#       EMEA:
+#         active: false

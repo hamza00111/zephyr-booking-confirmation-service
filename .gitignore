@@ -30,10 +30,13 @@ bin/
 *.log
 logs/
 
-# Local config / secrets (never commit real credentials)
-application-local.yaml
-application-local.yml
-application-local.properties
+# Local config / secrets (never commit real credentials).
+# NOTE: application-local.yaml is tracked on purpose — it holds only local
+# throwaway container values for "clone and run". Real secrets go via env vars
+# or an ignored application-secret*.yaml, never a committed file.
+application-secret.yaml
+application-secret.yml
+application-*-secret.yaml
 *.env
 .env
 *.jks
