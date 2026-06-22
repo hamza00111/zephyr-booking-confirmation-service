@@ -1,0 +1,125 @@
+spring:
+  application:
+    name: zephyr-booking-confirmation-service
+
+  datasource:
+    driver-class-name: oracle.jdbc.driver.OracleDriver
+    url: ${ZEPHYR_DB_URL}
+    username: ${ZEPHYR_DB_USERNAME}
+    password: ${ZEPHYR_DB_PASSWORD}
+    hikari:
+      keepalive-time: ${HIKARI_MAX_KEEP_ALIVE_TIME:10000}
+      maximum-pool-size: ${HIKARI_MAX_POOL_SIZE:10}
+      minimum-idle: ${HIKARI_MIN_IDLE:1}
+      leak-detection-threshold: ${HIKARI_LEAK_DETECTION_THRESHOLD:60000}
+      validation-timeout: ${HIKARI_VALIDATION_TIMEOUT:5000}
+      connection-timeout: ${HIKARI_CONNECTION_TIMEOUT:30000}
+      idle-timeout: ${HIKARI_IDLE_TIMEOUT:600000}
+
+  # Standard Spring Boot Kafka binding (consumer + producer).
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP_ID:zephyr-booking-confirmation-service}
+      auto-offset-reset: ${KAFKA_AUTO_OFFSET_RESET:earliest}
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      max-poll-records: ${BC_CONSUMER_MAX_POLL_RECORDS:500}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    properties:
+      enable.idempotence: true
+      delivery.timeout.ms: ${KAFKA_DELIVERY_TIMEOUT_MS:15000}
+      request.timeout.ms: ${KAFKA_REQUEST_TIMEOUT_MS:10000}
+      max.block.ms: ${KAFKA_MAX_BLOCK_MS:5000}
+      compression.type: ${KAFKA_COMPRESSION_TYPE:lz4}
+      linger.ms: ${KAFKA_LINGER_MS:20}
+      batch.size: ${KAFKA_BATCH_SIZE:65536}
+
+server:
+  port: ${SERVER_PORT:0}
+  servlet:
+    context-path: ${CONTEXT_PATH:/booking-confirmation}
+
+app:
+  booking-confirmation:
+
+    # Kafka consumer (inbox ingestion) settings.
+    consumer:
+      concurrency: ${BC_CONSUMER_CONCURRENCY:3}
+      max-poll-records: ${BC_CONSUMER_MAX_POLL_RECORDS:500}
+      retry-backoff-ms: ${BC_CONSUMER_RETRY_BACKOFF_MS:2000}
+      retry-max-attempts: ${BC_CONSUMER_RETRY_MAX_ATTEMPTS:3}
+
+    # Shared scheduler thread pool (3 ticks/region: process, relay, requeue).
+    scheduler:
+      pool-size: ${BC_SCHEDULER_POOL_SIZE:12}
+      thread-name-prefix: ${BC_SCHEDULER_THREAD_PREFIX:booking-confirmation-scheduler-}
+      await-termination-seconds: ${BC_SCHEDULER_AWAIT_SECONDS:10}
+
+    # PROCESS stage: drain inbox -> transform -> outbox.
+    process:
+      tick-interval-ms: ${BC_PROCESS_TICK_MS:3000}
+      batch-size: ${BC_PROCESS_BATCH_SIZE:200}
+
+    # RELAY stage: drain outbox -> publish to published.<region>.
+    relay:
+      tick-interval-ms: ${BC_RELAY_TICK_MS:3000}
+      batch-size: ${BC_RELAY_BATCH_SIZE:100}
+
+    # REQUEUE stage: promote SEND_FAILURE back to NEW within retry budget.
+    requeue:
+      tick-interval-ms: ${BC_REQUEUE_TICK_MS:60000}
+      max-retries: ${BC_REQUEUE_MAX_RETRIES:5}
+
+    # Per-region isolation: own lock, circuit breaker, scheduled tasks, topics.
+    regions:
+      AMER:
+        active: ${AMER_ACTIVE:true}
+        lock-ttl-multiplier: ${AMER_LOCK_TTL_MULTIPLIER:3}
+        internal-topic: ${AMER_INTERNAL_TOPIC:dev.booking.trade.internal.amer}
+        published-topic: ${AMER_PUBLISHED_TOPIC:dev.booking.trade.published.amer}
+      APAC:
+        active: ${APAC_ACTIVE:true}
+        lock-ttl-multiplier: ${APAC_LOCK_TTL_MULTIPLIER:3}
+        internal-topic: ${APAC_INTERNAL_TOPIC:dev.booking.trade.internal.apac}
+        published-topic: ${APAC_PUBLISHED_TOPIC:dev.booking.trade.published.apac}
+      EMEA:
+        active: ${EMEA_ACTIVE:true}
+        lock-ttl-multiplier: ${EMEA_LOCK_TTL_MULTIPLIER:3}
+        internal-topic: ${EMEA_INTERNAL_TOPIC:dev.booking.trade.internal.emea}
+        published-topic: ${EMEA_PUBLISHED_TOPIC:dev.booking.trade.published.emea}
+
+    # Resilience4j circuit breaker config for the relay (Kafka publish) stage.
+    resilience:
+      failure-rate-threshold: ${RESILIENCE_FAILURE_RATE_THRESHOLD:50}
+      slow-call-rate-threshold: ${RESILIENCE_SLOW_CALL_RATE_THRESHOLD:50}
+      slow-call-duration-threshold-ms: ${RESILIENCE_SLOW_CALL_DURATION_MS:3000}
+      sliding-window-size: ${RESILIENCE_SLIDING_WINDOW_SIZE:100}
+      wait-duration-in-open-state-ms: ${RESILIENCE_WAIT_OPEN_MS:60000}
+      permitted-calls-in-half-open-state: ${RESILIENCE_PERMITTED_HALF_OPEN:5}
+      minimum-number-of-calls: ${RESILIENCE_MIN_CALLS:10}
+
+# Kafka SSL (supply in remote envs; empty => plaintext for local).
+kafka:
+  ssl:
+    key-store-location: ${KAFKA_SSL_KEY_STORE_LOCATION:}
+    key-store-type: ${KAFKA_SSL_KEY_STORE_TYPE:}
+    key-store-password: ${KAFKA_SSL_KEY_STORE_PASSWORD:}
+    trust-store-location: ${KAFKA_SSL_TRUST_STORE_LOCATION:}
+    trust-store-type: ${KAFKA_SSL_TRUST_STORE_TYPE:}
+    trust-store-password: ${KAFKA_SSL_TRUST_STORE_PASSWORD:}
+
+logging:
+  level:
+    org.springframework.boot: INFO
+    org.apache.kafka.clients: ERROR
+    root: ${LOGGING_ROOT_LEVEL:INFO}
+
+springdoc:
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:true}
+  api-docs:
+    path: /v3/api-docs
