@@ -15,6 +15,7 @@ public record OutboxEvent(
         String idempotencyKey,
         String destination,
         @Nullable String messageKey,
+        @Nullable TradeEventType eventType,
         String payload,
         @Nullable Long inboxId,
         @Nullable String traceId,

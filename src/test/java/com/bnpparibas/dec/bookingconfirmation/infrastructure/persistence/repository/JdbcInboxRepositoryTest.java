@@ -30,7 +30,7 @@ class JdbcInboxRepositoryTest {
 
     @Test
     void markProcessed_shouldNotTouchDatabase_whenIdsEmpty() {
-        var repository = new JdbcInboxRepository(jdbcTemplate);
+        var repository = new JdbcInboxRepository(jdbcTemplate, 5000, 300000);
 
         repository.markProcessed(Region.AMER, List.of());
 
@@ -39,7 +39,7 @@ class JdbcInboxRepositoryTest {
 
     @Test
     void insertIfAbsent_shouldReturnTrue_whenRowInserted() {
-        var repository = new JdbcInboxRepository(jdbcTemplate);
+        var repository = new JdbcInboxRepository(jdbcTemplate, 5000, 300000);
         given(jdbcTemplate.update(anyString(), any(SqlParameterSource.class))).willReturn(1);
 
         assertThat(repository.insertIfAbsent(message())).isTrue();
@@ -47,7 +47,7 @@ class JdbcInboxRepositoryTest {
 
     @Test
     void insertIfAbsent_shouldReturnFalse_whenDuplicateKeyViolation() {
-        var repository = new JdbcInboxRepository(jdbcTemplate);
+        var repository = new JdbcInboxRepository(jdbcTemplate, 5000, 300000);
         given(jdbcTemplate.update(anyString(), any(SqlParameterSource.class)))
                 .willThrow(new DuplicateKeyException("UQ_INBOX_DEDUPE"));
 

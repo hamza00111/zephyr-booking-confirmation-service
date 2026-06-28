@@ -53,10 +53,11 @@ public record BookingConfirmationProperties(
             @DefaultValue("3000") long tickIntervalMs,
             @DefaultValue("100") int batchSize) {}
 
-    /** REQUEUE stage: SEND_FAILURE -> NEW within retry budget. */
+    /** REQUEUE stage: SEND_FAILURE -> NEW within retry budget; also drives retention (purge of delivered rows). */
     public record RequeueProperties(
             @DefaultValue("60000") long tickIntervalMs,
-            @DefaultValue("5") int maxRetries) {}
+            @DefaultValue("5") int maxRetries,
+            @DefaultValue("7") int retentionDays) {}
 
     /** Resilience4j circuit-breaker config for the relay (Kafka publish) stage. */
     public record ResilienceProperties(

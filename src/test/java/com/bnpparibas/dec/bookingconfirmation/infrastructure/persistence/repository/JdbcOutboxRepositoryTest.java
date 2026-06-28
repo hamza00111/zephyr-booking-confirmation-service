@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
+import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,7 +34,7 @@ class JdbcOutboxRepositoryTest {
 
     @BeforeEach
     void setUp() {
-        repository = new JdbcOutboxRepository(jdbcTemplate);
+        repository = new JdbcOutboxRepository(jdbcTemplate, 5000, 300000);
     }
 
     @Test
@@ -65,13 +66,22 @@ class JdbcOutboxRepositoryTest {
     }
 
     @Test
-    void requeueFailed_shouldReturnPromotedRowCount() {
+    void markParked_shouldNotTouchDatabase_whenIdsEmpty() {
+        repository.markParked(Region.AMER, List.of(), "irrelevant");
+
+        verifyNoInteractions(jdbcTemplate);
+    }
+
+    @Test
+    void requeueReady_shouldReturnPromotedRowCount() {
         given(jdbcTemplate.update(anyString(), any(SqlParameterSource.class))).willReturn(7);
 
-        assertThat(repository.requeueFailed(Region.AMER, 5)).isEqualTo(7);
+        assertThat(repository.requeueReady(Region.AMER)).isEqualTo(7);
     }
 
     private static OutboxEvent event(long inboxId) {
-        return new OutboxEvent(null, Region.AMER, "idem-" + inboxId, "published", "K1", "{}", inboxId, "trace", null);
+        return new OutboxEvent(
+                null, Region.AMER, "idem-" + inboxId, "published", "K1",
+                TradeEventType.CREATED, "{}", inboxId, "trace", null);
     }
 }

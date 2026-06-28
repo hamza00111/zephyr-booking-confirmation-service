@@ -4,9 +4,11 @@ import static com.bnpparibas.dec.bookingconfirmation.infrastructure.config.datas
 
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
+import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -17,8 +19,9 @@ import org.springframework.stereotype.Repository;
  * Oracle JDBC implementation of the outbox (mirrors the publisher's relay drain semantics).
  *
  * <p>{@link #findNew} claims rows with {@code FOR UPDATE SKIP LOCKED} (runs inside the RELAY
- * transaction). {@link #requeueFailed} promotes {@code SEND_FAILURE} rows back to {@code NEW} while
- * the retry budget remains, otherwise to {@code RETRY_EXHAUSTED}.
+ * transaction). No data is ever lost on send failure: transient failures go to {@code SEND_FAILURE}
+ * with an exponential-backoff {@code NEXT_ATTEMPT_AT} and are retried indefinitely by
+ * {@link #requeueReady}; only poison goes to {@code PARKED} (retained, replayable).
  */
 @Repository
 public class JdbcOutboxRepository implements OutboxRepository {
@@ -26,14 +29,14 @@ public class JdbcOutboxRepository implements OutboxRepository {
     private static final String INSERT_SQL =
             """
             INSERT INTO BOOKING_CONFIRMATION_OUTBOX
-                (REGION, IDEMPOTENCY_KEY, DESTINATION, MESSAGE_KEY, EVENT_PAYLOAD, INBOX_ID, TRACE_ID, HEADERS, PROCESSING_STATUS)
+                (REGION, IDEMPOTENCY_KEY, DESTINATION, MESSAGE_KEY, EVENT_TYPE, EVENT_PAYLOAD, INBOX_ID, TRACE_ID, HEADERS, PROCESSING_STATUS)
             VALUES
-                (:region, :idempotencyKey, :destination, :messageKey, :payload, :inboxId, :traceId, :headers, 'NEW')
+                (:region, :idempotencyKey, :destination, :messageKey, :eventType, :payload, :inboxId, :traceId, :headers, 'NEW')
             """;
 
     private static final String SELECT_NEW =
             """
-            SELECT ID, REGION, IDEMPOTENCY_KEY, DESTINATION, MESSAGE_KEY, EVENT_PAYLOAD, INBOX_ID, TRACE_ID, HEADERS
+            SELECT ID, REGION, IDEMPOTENCY_KEY, DESTINATION, MESSAGE_KEY, EVENT_TYPE, EVENT_PAYLOAD, INBOX_ID, TRACE_ID, HEADERS
             FROM BOOKING_CONFIRMATION_OUTBOX
             WHERE ID IN (
                 SELECT ID
@@ -53,24 +56,63 @@ public class JdbcOutboxRepository implements OutboxRepository {
             WHERE ID IN (:ids) AND REGION = :region
             """;
 
+    // Transient failure: schedule the next retry with exponential backoff capped at :capSeconds.
+    // POWER(2, RETRY_COUNT) uses the pre-increment count so the first retry waits :baseSeconds.
     private static final String MARK_SEND_FAILURE =
             """
             UPDATE BOOKING_CONFIRMATION_OUTBOX
             SET PROCESSING_STATUS = 'SEND_FAILURE',
                 RETRY_COUNT       = RETRY_COUNT + 1,
+                NEXT_ATTEMPT_AT   = SYSTIMESTAMP
+                                  + NUMTODSINTERVAL(LEAST(:capSeconds, :baseSeconds * POWER(2, RETRY_COUNT)), 'SECOND'),
                 ERROR_MESSAGE     = :errorMessage,
                 UPDATED_ON        = SYSTIMESTAMP
             WHERE ID IN (:ids) AND REGION = :region
             """;
 
-    private static final String REQUEUE_FAILED =
+    private static final String MARK_PARKED =
             """
             UPDATE BOOKING_CONFIRMATION_OUTBOX
-            SET PROCESSING_STATUS = CASE WHEN RETRY_COUNT < :maxRetries THEN 'NEW' ELSE 'RETRY_EXHAUSTED' END,
-                ERROR_MESSAGE     = CASE WHEN RETRY_COUNT < :maxRetries THEN NULL ELSE ERROR_MESSAGE END,
+            SET PROCESSING_STATUS = 'PARKED',
+                RETRY_COUNT       = RETRY_COUNT + 1,
+                NEXT_ATTEMPT_AT   = NULL,
+                ERROR_MESSAGE     = :errorMessage,
+                UPDATED_ON        = SYSTIMESTAMP
+            WHERE ID IN (:ids) AND REGION = :region
+            """;
+
+    private static final String REQUEUE_READY =
+            """
+            UPDATE BOOKING_CONFIRMATION_OUTBOX
+            SET PROCESSING_STATUS = 'NEW',
+                NEXT_ATTEMPT_AT   = NULL,
+                ERROR_MESSAGE     = NULL,
                 UPDATED_ON        = SYSTIMESTAMP
             WHERE PROCESSING_STATUS = 'SEND_FAILURE'
               AND REGION = :region
+              AND (NEXT_ATTEMPT_AT IS NULL OR NEXT_ATTEMPT_AT <= SYSTIMESTAMP)
+            """;
+
+    // Cancel a not-yet-delivered CREATE for a busted trade: park it so it is never published (retained).
+    private static final String PARK_UNSENT_FOR_KEY =
+            """
+            UPDATE BOOKING_CONFIRMATION_OUTBOX
+            SET PROCESSING_STATUS = 'PARKED',
+                NEXT_ATTEMPT_AT   = NULL,
+                ERROR_MESSAGE     = :errorMessage,
+                UPDATED_ON        = SYSTIMESTAMP
+            WHERE PROCESSING_STATUS IN ('NEW', 'SEND_FAILURE')
+              AND REGION = :region
+              AND MESSAGE_KEY = :messageKey
+            """;
+
+    // Retention: only delivered rows are deletable. PARKED/SEND_FAILURE/NEW are never purged.
+    private static final String PURGE_SENT =
+            """
+            DELETE FROM BOOKING_CONFIRMATION_OUTBOX
+            WHERE REGION = :region
+              AND PROCESSING_STATUS = 'SENT'
+              AND UPDATED_ON < SYSTIMESTAMP - NUMTODSINTERVAL(:retentionDays, 'DAY')
             """;
 
     private static final RowMapper<OutboxEvent> ROW_MAPPER = (rs, rowNum) -> new OutboxEvent(
@@ -79,16 +121,27 @@ public class JdbcOutboxRepository implements OutboxRepository {
             rs.getString("IDEMPOTENCY_KEY"),
             rs.getString("DESTINATION"),
             rs.getString("MESSAGE_KEY"),
+            readEventType(rs.getString("EVENT_TYPE")),
             rs.getString("EVENT_PAYLOAD"),
             rs.getObject("INBOX_ID", Long.class),
             rs.getString("TRACE_ID"),
             rs.getString("HEADERS"));
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
+    private final double backoffBaseSeconds;
+    private final double backoffCapSeconds;
 
     public JdbcOutboxRepository(
-            @Qualifier(ZEPHYR_NAMED_PARAMETER_JDBC_TEMPLATE) final NamedParameterJdbcTemplate jdbcTemplate) {
+            @Qualifier(ZEPHYR_NAMED_PARAMETER_JDBC_TEMPLATE) final NamedParameterJdbcTemplate jdbcTemplate,
+            @Value("${app.booking-confirmation.relay.retry-backoff-base-ms:5000}") final long backoffBaseMs,
+            @Value("${app.booking-confirmation.relay.retry-backoff-cap-ms:300000}") final long backoffCapMs) {
         this.jdbcTemplate = jdbcTemplate;
+        this.backoffBaseSeconds = backoffBaseMs / 1000.0;
+        this.backoffCapSeconds = backoffCapMs / 1000.0;
+    }
+
+    private static TradeEventType readEventType(final String value) {
+        return value == null ? null : TradeEventType.valueOf(value);
     }
 
     @Override
@@ -102,6 +155,7 @@ public class JdbcOutboxRepository implements OutboxRepository {
                         .addValue("idempotencyKey", event.idempotencyKey())
                         .addValue("destination", event.destination())
                         .addValue("messageKey", event.messageKey())
+                        .addValue("eventType", event.eventType() == null ? null : event.eventType().name())
                         .addValue("payload", event.payload())
                         .addValue("inboxId", event.inboxId())
                         .addValue("traceId", event.traceId())
@@ -136,13 +190,44 @@ public class JdbcOutboxRepository implements OutboxRepository {
                 new MapSqlParameterSource()
                         .addValue("ids", ids)
                         .addValue("region", region.name())
+                        .addValue("baseSeconds", backoffBaseSeconds)
+                        .addValue("capSeconds", backoffCapSeconds)
                         .addValue("errorMessage", JdbcInboxRepository.truncate(errorMessage)));
     }
 
     @Override
-    public int requeueFailed(final Region region, final int maxRetries) {
+    public void markParked(final Region region, final List<Long> ids, final String errorMessage) {
+        if (ids.isEmpty()) {
+            return;
+        }
+        jdbcTemplate.update(
+                MARK_PARKED,
+                new MapSqlParameterSource()
+                        .addValue("ids", ids)
+                        .addValue("region", region.name())
+                        .addValue("errorMessage", JdbcInboxRepository.truncate(errorMessage)));
+    }
+
+    @Override
+    public int requeueReady(final Region region) {
         return jdbcTemplate.update(
-                REQUEUE_FAILED,
-                new MapSqlParameterSource().addValue("region", region.name()).addValue("maxRetries", maxRetries));
+                REQUEUE_READY, new MapSqlParameterSource().addValue("region", region.name()));
+    }
+
+    @Override
+    public int parkUnsentForKey(final Region region, final String messageKey, final String reason) {
+        return jdbcTemplate.update(
+                PARK_UNSENT_FOR_KEY,
+                new MapSqlParameterSource()
+                        .addValue("region", region.name())
+                        .addValue("messageKey", messageKey)
+                        .addValue("errorMessage", JdbcInboxRepository.truncate(reason)));
+    }
+
+    @Override
+    public int purgeSent(final Region region, final int retentionDays) {
+        return jdbcTemplate.update(
+                PURGE_SENT,
+                new MapSqlParameterSource().addValue("region", region.name()).addValue("retentionDays", retentionDays));
     }
 }

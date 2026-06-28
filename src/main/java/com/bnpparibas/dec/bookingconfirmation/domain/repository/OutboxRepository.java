@@ -20,13 +20,41 @@ public interface OutboxRepository {
 
     void markSent(Region region, List<Long> ids);
 
+    /**
+     * Marks rows as {@code SEND_FAILURE} after a transient (infrastructure) send failure and schedules
+     * their next retry with exponential backoff ({@code NEXT_ATTEMPT_AT}). These are retried
+     * indefinitely — never abandoned — so a broker outage can never lose a message.
+     */
     void markSendFailure(Region region, List<Long> ids, String errorMessage);
 
     /**
-     * Promotes {@code SEND_FAILURE} rows back to {@code NEW} while their retry count is below
-     * {@code maxRetries}, otherwise marks them {@code RETRY_EXHAUSTED}.
+     * Moves rows to {@code PARKED} after a poison (message-level) send failure that retrying cannot
+     * fix. Parked rows are retained, alerted and replayable; they are never silently dropped.
+     */
+    void markParked(Region region, List<Long> ids, String errorMessage);
+
+    /**
+     * Promotes {@code SEND_FAILURE} rows whose backoff has elapsed ({@code NEXT_ATTEMPT_AT <= now})
+     * back to {@code NEW}. There is no terminal exhaustion — infrastructure failures retry forever.
      *
      * @return number of rows transitioned.
      */
-    int requeueFailed(Region region, int maxRetries);
+    int requeueReady(Region region);
+
+    /**
+     * Parks any not-yet-delivered ({@code NEW}/{@code SEND_FAILURE}) rows for a trade key so they are
+     * never published. Used by the create-barrier when a trade is busted before its CREATE was
+     * delivered: the staged CREATE must not reach downstream. Rows are retained (audited), not deleted.
+     *
+     * @return number of rows parked.
+     */
+    int parkUnsentForKey(Region region, String messageKey, String reason);
+
+    /**
+     * Deletes delivered ({@code SENT}) rows older than {@code retentionDays}. Never deletes a
+     * non-{@code SENT} row ({@code PARKED}/{@code SEND_FAILURE}/{@code NEW}) — that would be silent loss.
+     *
+     * @return number of rows purged.
+     */
+    int purgeSent(Region region, int retentionDays);
 }
