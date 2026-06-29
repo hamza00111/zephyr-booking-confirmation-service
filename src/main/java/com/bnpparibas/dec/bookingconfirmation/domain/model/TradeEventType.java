@@ -10,5 +10,5 @@ package com.bnpparibas.dec.bookingconfirmation.domain.model;
 public enum TradeEventType {
     CREATED,
     AMENDED,
-    BUSTED
+    DELETED
 }

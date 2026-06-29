@@ -1,14 +1,16 @@
 package com.bnpparibas.dec.bookingconfirmation.domain.event;
 
 import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
+import com.bnpparibas.dec.zephyr.domain.trade.events.TradeEvent;
 import java.util.Optional;
 
 /**
- * Port for the minimal TradeEvent payload introspection the PROCESS stage needs.
+ * Port for the TradeEvent payload introspection the PROCESS stage needs.
  *
- * <p>The payload is otherwise treated as an opaque string end-to-end — the typed TradeEvent model
- * lives in the producing system's repo and is deliberately not a dependency of this service (the
- * upcoming enrich/filter work may revisit that).
+ * <p>The lightweight reads ({@link #eventType}, {@link #traceId}, {@link #rewriteType}) operate on the
+ * raw JSON tree so the payload can be republished faithfully. {@link #deserialize} binds the payload
+ * to the typed {@link TradeEvent} domain model for filter/business decisions — those decisions never
+ * rebuild the published bytes, so a bind failure is tolerated.
  */
 public interface TradeEventCodec {
 
@@ -33,4 +35,14 @@ public interface TradeEventCodec {
      * @return empty when the payload is unparseable or carries no {@code traceId}.
      */
     Optional<String> traceId(String payload);
+
+    /**
+     * Deserializes the payload into the typed {@link TradeEvent} domain model (polymorphic on the
+     * type discriminator) for filter/business decisions in the PROCESS stage.
+     *
+     * @return empty when the payload cannot be bound to a known {@code TradeEvent} subtype — the PROCESS
+     *     stage then marks the row INVALID (retained for inspection/replay), never publishing an event
+     *     the business rules could not vet.
+     */
+    Optional<TradeEvent> deserialize(String payload);
 }

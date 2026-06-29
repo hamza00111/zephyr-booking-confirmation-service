@@ -4,24 +4,38 @@ import com.bnpparibas.dec.bookingconfirmation.infrastructure.kafka.KafkaSslSuppo
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.dao.DataAccessException;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.listener.ContainerProperties.AckMode;
+import org.springframework.kafka.listener.DeadLetterPublishingRecorder;
 import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.transaction.TransactionException;
+import org.springframework.util.backoff.BackOff;
 import org.springframework.util.backoff.FixedBackOff;
 
 /**
  * Consumer factory + listener container factory for inbox ingestion.
  *
  * <p>Manual immediate ack: the offset is committed only after the inbox write succeeds, so a crash
- * mid-ingestion causes Kafka redelivery (no message loss). On a transient failure (e.g. DB blip) the
- * error handler retries with backoff before the offset advances. For strict no-loss on a persistent
- * failure, harden later by routing to a dead-letter topic or extending the retry budget.
+ * mid-ingestion causes Kafka redelivery (no message loss).
+ *
+ * <p><b>No data loss on persistent failure.</b> The error handler classifies failures:
+ * <ul>
+ *   <li><b>Infrastructure</b> (DB down, connection/transaction failure) — retried <em>indefinitely</em>
+ *       with backoff. The offset never advances, so a DB outage can never silently skip live traffic;
+ *       it back-pressures to Kafka and resumes in order once the DB recovers.
+ *   <li><b>Poison</b> (any other failure — deserialization, an NPE bug) — retried a bounded number of
+ *       times then routed to {@code <topic>.DLT} (durable, alerted, replayable). This never silently
+ *       commits-and-skips, and a deterministic bug cannot block a partition forever.
+ * </ul>
  */
 @Configuration
 public class KafkaConsumerConfig {
@@ -59,16 +73,53 @@ public class KafkaConsumerConfig {
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
             final ConsumerFactory<String, String> consumerFactory,
+            final KafkaTemplate<String, String> kafkaTemplate,
             @Value("${app.booking-confirmation.consumer.concurrency:3}") final int concurrency,
             @Value("${app.booking-confirmation.consumer.retry-backoff-ms:2000}") final long retryBackoffMs,
-            @Value("${app.booking-confirmation.consumer.retry-max-attempts:3}") final long retryMaxAttempts) {
+            @Value("${app.booking-confirmation.consumer.retry-max-attempts:3}") final long retryMaxAttempts,
+            @Value("${app.booking-confirmation.consumer.infra-retry-backoff-ms:5000}") final long infraBackoffMs) {
         final ConcurrentKafkaListenerContainerFactory<String, String> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
         factory.setConcurrency(concurrency);
         factory.getContainerProperties().setAckMode(AckMode.MANUAL_IMMEDIATE);
-
-        factory.setCommonErrorHandler(new DefaultErrorHandler(new FixedBackOff(retryBackoffMs, retryMaxAttempts)));
+        factory.setCommonErrorHandler(noLossErrorHandler(kafkaTemplate, retryBackoffMs, retryMaxAttempts, infraBackoffMs));
         return factory;
+    }
+
+    /**
+     * Poison is recovered to {@code <topic>.DLT} after a bounded retry; infrastructure failures are
+     * retried indefinitely so a DB outage neither drops nor dead-letters live traffic.
+     */
+    private DefaultErrorHandler noLossErrorHandler(
+            final KafkaTemplate<String, String> kafkaTemplate,
+            final long retryBackoffMs,
+            final long retryMaxAttempts,
+            final long infraBackoffMs) {
+        final DeadLetterPublishingRecorder recoverer = new DeadLetterPublishingRecorder(
+                kafkaTemplate, (record, exception) -> new TopicPartition(record.topic() + ".DLT", record.partition()));
+
+        final BackOff poisonBackOff = new FixedBackOff(retryBackoffMs, retryMaxAttempts);
+        final BackOff infraBackOff = new FixedBackOff(infraBackoffMs, Long.MAX_VALUE); // effectively infinite
+
+        final DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, poisonBackOff);
+        handler.setBackOffFunction((record, exception) ->
+                isInfrastructureFailure(exception) ? infraBackOff : poisonBackOff);
+        return handler;
+    }
+
+    /** True if the failure is a transient infrastructure problem (DB/connection/transaction). */
+    private static boolean isInfrastructureFailure(final Exception exception) {
+        Throwable cause = exception;
+        while (cause != null) {
+            // DataAccessException covers Spring's JDBC/connection failures (incl. CannotGetJdbcConnection).
+            if (cause instanceof DataAccessException
+                    || cause instanceof TransactionException
+                    || cause instanceof java.sql.SQLException) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
     }
 }

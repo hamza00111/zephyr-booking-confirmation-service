@@ -9,8 +9,10 @@ spring:
     password: ${ZEPHYR_DB_PASSWORD}
     hikari:
       keepalive-time: ${HIKARI_MAX_KEEP_ALIVE_TIME:10000}
-      maximum-pool-size: ${HIKARI_MAX_POOL_SIZE:10}
-      minimum-idle: ${HIKARI_MIN_IDLE:1}
+      # Sized for 3 regions x (consumer concurrency + process/relay/requeue ticks) drawing concurrently.
+      # Keep >= activeRegions*4 + consumerConcurrency; connection-timeout should stay below the lock TTL.
+      maximum-pool-size: ${HIKARI_MAX_POOL_SIZE:20}
+      minimum-idle: ${HIKARI_MIN_IDLE:4}
       leak-detection-threshold: ${HIKARI_LEAK_DETECTION_THRESHOLD:60000}
       validation-timeout: ${HIKARI_VALIDATION_TIMEOUT:5000}
       connection-timeout: ${HIKARI_CONNECTION_TIMEOUT:30000}
@@ -47,11 +49,14 @@ app:
   booking-confirmation:
 
     # Kafka consumer (inbox ingestion) settings.
+    # No data loss: poison (deserialization/bug) is DLT'd after retry-max-attempts; infrastructure
+    # failures (DB down) are retried every infra-retry-backoff-ms indefinitely (offset never advances).
     consumer:
       concurrency: ${BC_CONSUMER_CONCURRENCY:3}
       max-poll-records: ${BC_CONSUMER_MAX_POLL_RECORDS:500}
       retry-backoff-ms: ${BC_CONSUMER_RETRY_BACKOFF_MS:2000}
       retry-max-attempts: ${BC_CONSUMER_RETRY_MAX_ATTEMPTS:3}
+      infra-retry-backoff-ms: ${BC_CONSUMER_INFRA_RETRY_BACKOFF_MS:5000}
 
     # Shared scheduler thread pool (3 ticks/region: process, relay, requeue).
     scheduler:
@@ -60,19 +65,26 @@ app:
       await-termination-seconds: ${BC_SCHEDULER_AWAIT_SECONDS:10}
 
     # PROCESS stage: drain inbox -> transform -> outbox.
+    # retry-backoff-*-ms: exponential backoff for PROCESS_FAILURE rows before the inbox requeue retries them.
     process:
       tick-interval-ms: ${BC_PROCESS_TICK_MS:3000}
       batch-size: ${BC_PROCESS_BATCH_SIZE:200}
+      retry-backoff-base-ms: ${BC_PROCESS_RETRY_BACKOFF_BASE_MS:5000}
+      retry-backoff-cap-ms: ${BC_PROCESS_RETRY_BACKOFF_CAP_MS:300000}
 
     # RELAY stage: drain outbox -> publish to published.<region>.
+    # retry-backoff-*-ms: exponential backoff for SEND_FAILURE rows (infra failures retry indefinitely).
     relay:
       tick-interval-ms: ${BC_RELAY_TICK_MS:3000}
       batch-size: ${BC_RELAY_BATCH_SIZE:100}
+      retry-backoff-base-ms: ${BC_RELAY_RETRY_BACKOFF_BASE_MS:5000}
+      retry-backoff-cap-ms: ${BC_RELAY_RETRY_BACKOFF_CAP_MS:300000}
 
-    # REQUEUE stage: promote SEND_FAILURE back to NEW within retry budget.
+    # REQUEUE stage: promote ready failures back to NEW (no terminal exhaustion); also purges delivered rows.
     requeue:
       tick-interval-ms: ${BC_REQUEUE_TICK_MS:60000}
       max-retries: ${BC_REQUEUE_MAX_RETRIES:5}
+      retention-days: ${BC_REQUEUE_RETENTION_DAYS:7}
 
     # Per-region isolation: own lock, circuit breaker, scheduled tasks, topics.
     regions:

@@ -12,13 +12,18 @@ import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.ProcessType;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
+import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
+import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
+import com.bnpparibas.dec.bookingconfirmation.domain.repository.TradeGateRepository;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -35,7 +40,13 @@ class DefaultBookingRelayServiceTest {
     private static final InstanceId INSTANCE = new InstanceId("test-instance");
 
     @Mock
+    private InboxRepository inboxRepository;
+
+    @Mock
     private OutboxRepository outboxRepository;
+
+    @Mock
+    private TradeGateRepository tradeGateRepository;
 
     @Mock
     private DomainEventPublisher publisher;
@@ -44,7 +55,7 @@ class DefaultBookingRelayServiceTest {
     private DistributedLockRepository lockRepository;
 
     @Test
-    void tick_shouldMarkSentForSuccessesAndSendFailureForFailures() {
+    void tick_shouldMarkSentForSuccessesAndRetryTransientFailures() {
         var service = relayService();
         lockAcquired();
         var ok = outboxEvent(1L);
@@ -58,7 +69,42 @@ class DefaultBookingRelayServiceTest {
         service.tick();
 
         verify(outboxRepository).markSent(Region.AMER, List.of(1L));
-        verify(outboxRepository).markSendFailure(Region.AMER, List.of(2L), "Kafka send failed in RELAY stage");
+        verify(outboxRepository)
+                .markSendFailure(Region.AMER, List.of(2L), "Kafka send failed in RELAY stage (will retry)");
+        verify(outboxRepository).markParked(Region.AMER, List.of(), "Poison message — not retryable; parked for review");
+    }
+
+    @Test
+    void tick_shouldReleaseBlockedAmends_whenCreateDelivered() {
+        var service = relayService();
+        lockAcquired();
+        var created = outboxEvent(1L); // eventType CREATED, key K1
+        given(outboxRepository.findNew(Region.AMER, 100)).willReturn(List.of(created));
+        Map<Long, CompletableFuture<?>> futures = new LinkedHashMap<>();
+        futures.put(1L, CompletableFuture.completedFuture("ok"));
+        given(publisher.sendAll(Region.AMER, List.of(created))).willReturn(futures);
+
+        service.tick();
+
+        // CREATE delivered → gate SENT and the amendments waiting behind the barrier are released.
+        verify(tradeGateRepository).markSent(Region.AMER, Set.of("K1"));
+        verify(inboxRepository).releaseBlocked(Region.AMER, Set.of("K1"));
+    }
+
+    @Test
+    void tick_shouldParkPoisonFailures_neverDropping() {
+        var service = relayService();
+        lockAcquired();
+        var poison = outboxEvent(3L);
+        given(outboxRepository.findNew(Region.AMER, 100)).willReturn(List.of(poison));
+        Map<Long, CompletableFuture<?>> futures = new LinkedHashMap<>();
+        futures.put(3L, CompletableFuture.failedFuture(new RecordTooLargeException("too big")));
+        given(publisher.sendAll(Region.AMER, List.of(poison))).willReturn(futures);
+
+        service.tick();
+
+        verify(outboxRepository).markParked(Region.AMER, List.of(3L), "Poison message — not retryable; parked for review");
+        verify(outboxRepository).markSendFailure(Region.AMER, List.of(), "Kafka send failed in RELAY stage (will retry)");
     }
 
     @Test
@@ -75,7 +121,8 @@ class DefaultBookingRelayServiceTest {
 
     private DefaultBookingRelayService relayService() {
         return new DefaultBookingRelayService(
-                Region.AMER, 1000, 100, 1, outboxRepository, publisher, transactionTemplate(), lockRepository, INSTANCE);
+                Region.AMER, 1000, 100, 1, inboxRepository, outboxRepository, tradeGateRepository, publisher,
+                transactionTemplate(), lockRepository, INSTANCE);
     }
 
     private void lockAcquired() {
@@ -85,7 +132,8 @@ class DefaultBookingRelayServiceTest {
     }
 
     private static OutboxEvent outboxEvent(long id) {
-        return new OutboxEvent(id, Region.AMER, "idem-" + id, "published", "K1", "{}", id, "trace", null);
+        return new OutboxEvent(
+                id, Region.AMER, "idem-" + id, "published", "K1", TradeEventType.CREATED, "{}", id, "trace", null);
     }
 
     private static TransactionTemplate transactionTemplate() {

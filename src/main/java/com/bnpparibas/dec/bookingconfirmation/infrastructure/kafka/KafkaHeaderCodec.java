@@ -1,14 +1,14 @@
 package com.bnpparibas.dec.bookingconfirmation.infrastructure.kafka;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.header.Headers;
 import org.jspecify.annotations.Nullable;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Serializes Kafka record headers to/from the JSON stored in the {@code HEADERS} column, so inbound
@@ -18,10 +18,13 @@ import org.jspecify.annotations.Nullable;
  * duplicate key keeps the last value, and genuinely binary header values are not guaranteed to
  * round-trip — switch to base64 + a list of pairs if that ever matters. Header handling is
  * best-effort audit/propagation: parsing never throws, so it cannot break ingestion or relay.
+ *
+ * <p>Uses a private vanilla Jackson 3 mapper (plain string map; the application's TradeEvent mix-in
+ * is irrelevant here).
  */
 public final class KafkaHeaderCodec {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     private KafkaHeaderCodec() {}
 
@@ -38,7 +41,7 @@ public final class KafkaHeaderCodec {
         }
         try {
             return MAPPER.writeValueAsString(map);
-        } catch (final JsonProcessingException unexpected) {
+        } catch (final JacksonException unexpected) {
             return null;
         }
     }
@@ -50,7 +53,7 @@ public final class KafkaHeaderCodec {
         }
         try {
             return MAPPER.readValue(json, new TypeReference<LinkedHashMap<String, String>>() {});
-        } catch (final JsonProcessingException unparseable) {
+        } catch (final JacksonException unparseable) {
             return Map.of();
         }
     }

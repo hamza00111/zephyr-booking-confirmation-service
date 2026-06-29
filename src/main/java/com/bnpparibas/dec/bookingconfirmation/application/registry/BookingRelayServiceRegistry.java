@@ -7,7 +7,9 @@ import com.bnpparibas.dec.bookingconfirmation.domain.event.DomainEventPublisher;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
+import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
+import com.bnpparibas.dec.bookingconfirmation.domain.repository.TradeGateRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingRelayService;
 import com.bnpparibas.dec.bookingconfirmation.infrastructure.resilience.BookingConfirmationCircuitBreakerRegistry;
 import org.springframework.stereotype.Component;
@@ -20,7 +22,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Component
 public class BookingRelayServiceRegistry extends BaseRegionServiceRegistry<BookingRelayService> {
 
+    private final InboxRepository inboxRepository;
     private final OutboxRepository outboxRepository;
+    private final TradeGateRepository tradeGateRepository;
     private final DomainEventPublisher publisher;
     private final BookingConfirmationCircuitBreakerRegistry breakerRegistry;
     private final TransactionTemplate transactionTemplate;
@@ -29,14 +33,18 @@ public class BookingRelayServiceRegistry extends BaseRegionServiceRegistry<Booki
 
     public BookingRelayServiceRegistry(
             final BookingConfirmationProperties properties,
+            final InboxRepository inboxRepository,
             final OutboxRepository outboxRepository,
+            final TradeGateRepository tradeGateRepository,
             final DomainEventPublisher publisher,
             final BookingConfirmationCircuitBreakerRegistry breakerRegistry,
             final TransactionTemplate transactionTemplate,
             final DistributedLockRepository lockRepository,
             final InstanceId instanceId) {
         super(properties);
+        this.inboxRepository = inboxRepository;
         this.outboxRepository = outboxRepository;
+        this.tradeGateRepository = tradeGateRepository;
         this.publisher = publisher;
         this.breakerRegistry = breakerRegistry;
         this.transactionTemplate = transactionTemplate;
@@ -52,7 +60,9 @@ public class BookingRelayServiceRegistry extends BaseRegionServiceRegistry<Booki
                 properties().relay().tickIntervalMs(),
                 properties().relay().batchSize(),
                 regionProperties.lockTtlMultiplier(),
+                inboxRepository,
                 outboxRepository,
+                tradeGateRepository,
                 publisher,
                 transactionTemplate,
                 lockRepository,

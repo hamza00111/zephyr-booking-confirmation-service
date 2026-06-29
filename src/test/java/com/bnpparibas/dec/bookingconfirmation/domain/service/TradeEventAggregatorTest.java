@@ -27,11 +27,11 @@ class TradeEventAggregatorTest {
     }
 
     @Test
-    void aggregate_shouldDropEntireGroup_whenCreatedAndBustedInSameWindow() {
+    void aggregate_shouldDropEntireGroup_whenCreatedAndDeletedInSameWindow() {
         var result = aggregator.aggregate(List.of(
                 event(1, "K1", TradeEventType.CREATED),
                 event(2, "K1", TradeEventType.AMENDED),
-                event(3, "K1", TradeEventType.BUSTED)));
+                event(3, "K1", TradeEventType.DELETED)));
 
         assertThat(result).singleElement().satisfies(agg -> {
             assertThat(agg.survivor()).isNull();                  // born and killed — nothing published
@@ -40,13 +40,13 @@ class TradeEventAggregatorTest {
     }
 
     @Test
-    void aggregate_shouldEmitBusted_whenAmendedThenBustedWithoutCreated() {
+    void aggregate_shouldEmitDeleted_whenAmendedThenDeletedWithoutCreated() {
         var result = aggregator.aggregate(List.of(
                 event(1, "K1", TradeEventType.AMENDED),
-                event(2, "K1", TradeEventType.BUSTED)));
+                event(2, "K1", TradeEventType.DELETED)));
 
         assertThat(result).singleElement().satisfies(agg -> {
-            assertThat(agg.emitAs()).isEqualTo(TradeEventType.BUSTED);
+            assertThat(agg.emitAs()).isEqualTo(TradeEventType.DELETED);
             assertThat(agg.survivor().id()).isEqualTo(2L);
         });
     }
@@ -64,14 +64,14 @@ class TradeEventAggregatorTest {
     }
 
     @Test
-    void aggregate_shouldLetBustedDominate_whenBustedArrivesBeforeAmend() {
+    void aggregate_shouldLetDeletedDominate_whenDeletedArrivesBeforeAmend() {
         var result = aggregator.aggregate(List.of(
-                event(1, "K1", TradeEventType.BUSTED),
+                event(1, "K1", TradeEventType.DELETED),
                 event(2, "K1", TradeEventType.AMENDED)));
 
         assertThat(result).singleElement().satisfies(agg -> {
-            assertThat(agg.emitAs()).isEqualTo(TradeEventType.BUSTED);
-            assertThat(agg.survivor().id()).isEqualTo(1L);        // the bust payload, not the later amend
+            assertThat(agg.emitAs()).isEqualTo(TradeEventType.DELETED);
+            assertThat(agg.survivor().id()).isEqualTo(1L);        // the delete payload, not the later amend
         });
     }
 
@@ -81,12 +81,12 @@ class TradeEventAggregatorTest {
                 event(1, "K1", TradeEventType.CREATED),
                 event(2, "K2", TradeEventType.AMENDED),
                 event(3, "K1", TradeEventType.AMENDED),
-                event(4, "K2", TradeEventType.BUSTED)));
+                event(4, "K2", TradeEventType.DELETED)));
 
         assertThat(result).hasSize(2);
         assertThat(result.get(0).emitAs()).isEqualTo(TradeEventType.CREATED);     // K1, first seen
         assertThat(result.get(0).survivor().id()).isEqualTo(3L);
-        assertThat(result.get(1).emitAs()).isEqualTo(TradeEventType.BUSTED);      // K2
+        assertThat(result.get(1).emitAs()).isEqualTo(TradeEventType.DELETED);      // K2
         assertThat(result.get(1).survivor().id()).isEqualTo(4L);
     }
 
@@ -94,7 +94,7 @@ class TradeEventAggregatorTest {
     void aggregate_shouldNotGroupNullKeyedEventsTogether() {
         var result = aggregator.aggregate(List.of(
                 event(1, null, TradeEventType.CREATED),
-                event(2, null, TradeEventType.BUSTED)));
+                event(2, null, TradeEventType.DELETED)));
 
         assertThat(result).hasSize(2);   // a missing key cannot identify a trade — each stays a singleton
     }

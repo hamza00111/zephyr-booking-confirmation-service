@@ -6,6 +6,7 @@ import com.bnpparibas.dec.bookingconfirmation.application.service.DefaultBooking
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
+import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingRequeueService;
 import org.springframework.stereotype.Component;
@@ -14,16 +15,19 @@ import org.springframework.stereotype.Component;
 @Component
 public class BookingRequeueServiceRegistry extends BaseRegionServiceRegistry<BookingRequeueService> {
 
+    private final InboxRepository inboxRepository;
     private final OutboxRepository outboxRepository;
     private final DistributedLockRepository lockRepository;
     private final InstanceId instanceId;
 
     public BookingRequeueServiceRegistry(
             final BookingConfirmationProperties properties,
+            final InboxRepository inboxRepository,
             final OutboxRepository outboxRepository,
             final DistributedLockRepository lockRepository,
             final InstanceId instanceId) {
         super(properties);
+        this.inboxRepository = inboxRepository;
         this.outboxRepository = outboxRepository;
         this.lockRepository = lockRepository;
         this.instanceId = instanceId;
@@ -35,7 +39,9 @@ public class BookingRequeueServiceRegistry extends BaseRegionServiceRegistry<Boo
                 region,
                 properties().requeue().tickIntervalMs(),
                 properties().requeue().maxRetries(),
+                properties().requeue().retentionDays(),
                 regionProperties.lockTtlMultiplier(),
+                inboxRepository,
                 outboxRepository,
                 lockRepository,
                 instanceId);

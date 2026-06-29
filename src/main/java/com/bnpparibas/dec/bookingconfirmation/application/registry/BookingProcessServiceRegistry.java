@@ -3,7 +3,6 @@ package com.bnpparibas.dec.bookingconfirmation.application.registry;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties.RegionProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.service.DefaultBookingProcessService;
-import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEnricher;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeFilter;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventCodec;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
@@ -11,6 +10,7 @@ import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
+import com.bnpparibas.dec.bookingconfirmation.domain.repository.TradeGateRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingProcessService;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.TradeEventAggregator;
 import org.springframework.stereotype.Component;
@@ -22,10 +22,10 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
 
     private final InboxRepository inboxRepository;
     private final OutboxRepository outboxRepository;
+    private final TradeGateRepository tradeGateRepository;
     private final TradeEventCodec tradeEventCodec;
     // Pure, stateless domain logic — instantiated here rather than Spring-managed.
     private final TradeEventAggregator tradeEventAggregator = new TradeEventAggregator();
-    private final TradeEnricher tradeEnricher;
     private final TradeFilter tradeFilter;
     private final TransactionTemplate transactionTemplate;
     private final DistributedLockRepository lockRepository;
@@ -35,8 +35,8 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
             final BookingConfirmationProperties properties,
             final InboxRepository inboxRepository,
             final OutboxRepository outboxRepository,
+            final TradeGateRepository tradeGateRepository,
             final TradeEventCodec tradeEventCodec,
-            final TradeEnricher tradeEnricher,
             final TradeFilter tradeFilter,
             final TransactionTemplate transactionTemplate,
             final DistributedLockRepository lockRepository,
@@ -44,8 +44,8 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
         super(properties);
         this.inboxRepository = inboxRepository;
         this.outboxRepository = outboxRepository;
+        this.tradeGateRepository = tradeGateRepository;
         this.tradeEventCodec = tradeEventCodec;
-        this.tradeEnricher = tradeEnricher;
         this.tradeFilter = tradeFilter;
         this.transactionTemplate = transactionTemplate;
         this.lockRepository = lockRepository;
@@ -62,9 +62,9 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
                 regionProperties.publishedTopic(),
                 inboxRepository,
                 outboxRepository,
+                tradeGateRepository,
                 tradeEventCodec,
                 tradeEventAggregator,
-                tradeEnricher,
                 tradeFilter,
                 transactionTemplate,
                 lockRepository,
