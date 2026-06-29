@@ -18,12 +18,12 @@ import org.jspecify.annotations.Nullable;
  * in order). Per group:
  *
  * <ul>
- *   <li>CREATED and BUSTED both present → emit nothing: the trade was born and killed before
+ *   <li>CREATED and DELETED both present → emit nothing: the trade was born and killed before
  *       downstream ever saw it.
  *   <li>CREATED present → emit one CREATED carrying the latest payload (an amendment's payload is
  *       re-typed by the caller).
- *   <li>BUSTED present without CREATED → emit the bust: downstream learned of the trade in an
- *       earlier drain and must learn of the bust. BUSTED dominates regardless of its position in
+ *   <li>DELETED present without CREATED → emit the delete: downstream learned of the trade in an
+ *       earlier drain and must learn of the delete. DELETED dominates regardless of its position in
  *       the group (defensive against out-of-order delivery).
  *   <li>otherwise (AMENDED only) → emit one AMENDED carrying the latest payload.
  * </ul>
@@ -47,17 +47,17 @@ public class TradeEventAggregator {
 
     private static TradeAggregation collapse(final List<ParsedTradeEvent> members) {
         boolean hasCreated = false;
-        boolean hasBusted = false;
+        boolean hasDeleted = false;
         for (final ParsedTradeEvent member : members) {
             hasCreated |= member.type() == TradeEventType.CREATED;
-            hasBusted |= member.type() == TradeEventType.BUSTED;
+            hasDeleted |= member.type() == TradeEventType.DELETED;
         }
-        if (hasCreated && hasBusted) {
+        if (hasCreated && hasDeleted) {
             return TradeAggregation.dropAll(ids(members, null));
         }
-        final ParsedTradeEvent survivor = hasBusted ? lastOf(members, TradeEventType.BUSTED) : members.getLast();
+        final ParsedTradeEvent survivor = hasDeleted ? lastOf(members, TradeEventType.DELETED) : members.getLast();
         final TradeEventType emitAs =
-                hasBusted ? TradeEventType.BUSTED : hasCreated ? TradeEventType.CREATED : TradeEventType.AMENDED;
+                hasDeleted ? TradeEventType.DELETED : hasCreated ? TradeEventType.CREATED : TradeEventType.AMENDED;
         return TradeAggregation.emit(survivor, emitAs, ids(members, survivor));
     }
 

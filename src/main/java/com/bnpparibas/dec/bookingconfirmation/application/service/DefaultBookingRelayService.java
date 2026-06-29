@@ -84,6 +84,7 @@ public class DefaultBookingRelayService extends AbstractRegionScopedService impl
             outboxRepository.markSendFailure(region(), retry, "Kafka send failed in RELAY stage (will retry)");
             outboxRepository.markParked(region(), parked, "Poison message — not retryable; parked for review");
             releaseDeliveredCreates(batch, sent);
+            failParkedCreates(batch, parked);
             if (!parked.isEmpty()) {
                 log.error("[{}] Parked {} poison outbox row(s) — needs review: {}",
                         processIdentifier(), parked.size(), parked);
@@ -117,6 +118,31 @@ public class DefaultBookingRelayService extends AbstractRegionScopedService impl
             log.info("[{}] Released {} blocked row(s) for {} delivered trade(s)",
                     processIdentifier(), released, deliveredCreateKeys.size());
         }
+    }
+
+    /**
+     * Create-barrier failure: for every CREATE just parked (poison, terminally undeliverable), flip its
+     * trade gate to FAILED and release any amendments held behind it ({@code BLOCKED -> NEW}). On the next
+     * PROCESS tick those amends hit the FAILED gate and auto-promote into a CREATE — so a dead CREATE
+     * self-heals instead of blocking the trade's amendments forever behind a CREATE that never delivers.
+     */
+    private void failParkedCreates(final List<OutboxEvent> batch, final List<Long> parked) {
+        final Set<Long> parkedIds = Set.copyOf(parked);
+        final Set<String> failedCreateKeys = new LinkedHashSet<>();
+        for (final OutboxEvent event : batch) {
+            if (event.eventType() == TradeEventType.CREATED
+                    && event.messageKey() != null
+                    && parkedIds.contains(event.id())) {
+                failedCreateKeys.add(event.messageKey());
+            }
+        }
+        if (failedCreateKeys.isEmpty()) {
+            return;
+        }
+        tradeGateRepository.markFailed(region(), failedCreateKeys);
+        final int released = inboxRepository.releaseBlocked(region(), failedCreateKeys);
+        log.warn("[{}] Parked CREATE for {} trade(s); gate->FAILED, released {} blocked amend(s) to self-heal: {}",
+                processIdentifier(), failedCreateKeys.size(), released, failedCreateKeys);
     }
 
     private enum SendOutcome {

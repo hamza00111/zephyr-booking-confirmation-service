@@ -1,7 +1,6 @@
 package com.bnpparibas.dec.bookingconfirmation.application.service;
 
 import com.bnpparibas.dec.bookingconfirmation.application.TraceMdc;
-import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEnricher;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeFilter;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventCodec;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.CreateState;
@@ -18,6 +17,7 @@ import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.TradeGateRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingProcessService;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.TradeEventAggregator;
+import com.bnpparibas.dec.zephyr.domain.trade.events.TradeEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -26,10 +26,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * PROCESS stage: drains NEW inbox rows, reads each event's type, aggregates per trade (Kafka message
- * key), applies the <b>create-barrier</b>, transforms the surviving events (enrich + filter), and
+ * key), applies the <b>create-barrier</b>, transforms the surviving events (filter), and
  * within a single transaction inserts the resulting outbox events and marks every drained row.
  *
- * <p><b>Create-barrier.</b> The downstream third party rejects an AMEND/BUST whose CREATE it never
+ * <p><b>Create-barrier.</b> The downstream third party rejects an AMEND/DELETE whose CREATE it never
  * received, so an AMEND must never be relayed before its trade's CREATE reaches SENT. A per-trade gate
  * ({@link TradeGateRepository}) records whether a CREATE has been emitted/delivered for each key:
  *
@@ -41,7 +41,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       order by RELAY).
  *   <li><b>AMEND, gate NONE/FAILED</b> → AUTO-PROMOTE into a CREATE (the payload is a full snapshot),
  *       so a terminally-failed CREATE self-heals with no human in the loop.
- *   <li><b>BUST before delivery</b> → emit nothing, cancel any not-yet-delivered CREATE, set the gate
+ *   <li><b>DELETE before delivery</b> → emit nothing, cancel any not-yet-delivered CREATE, set the gate
  *       VOID (the trade was born and killed before downstream saw it).
  * </ul>
  *
@@ -59,7 +59,6 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
     private final TradeGateRepository tradeGateRepository;
     private final TradeEventCodec tradeEventCodec;
     private final TradeEventAggregator tradeEventAggregator;
-    private final TradeEnricher tradeEnricher;
     private final TradeFilter tradeFilter;
     private final TransactionTemplate transactionTemplate;
 
@@ -74,7 +73,6 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
             final TradeGateRepository tradeGateRepository,
             final TradeEventCodec tradeEventCodec,
             final TradeEventAggregator tradeEventAggregator,
-            final TradeEnricher tradeEnricher,
             final TradeFilter tradeFilter,
             final TransactionTemplate transactionTemplate,
             final DistributedLockRepository lockRepository,
@@ -87,7 +85,6 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
         this.tradeGateRepository = tradeGateRepository;
         this.tradeEventCodec = tradeEventCodec;
         this.tradeEventAggregator = tradeEventAggregator;
-        this.tradeEnricher = tradeEnricher;
         this.tradeFilter = tradeFilter;
         this.transactionTemplate = transactionTemplate;
     }
@@ -120,7 +117,7 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
                 outcome.aggregatedAway.addAll(aggregation.collapsedIds());
                 final ParsedTradeEvent survivor = aggregation.survivor();
                 if (survivor == null) {
-                    continue; // whole group netted out: created and busted within this drain
+                    continue; // whole group netted out: created and deleted within this drain
                 }
                 final InboxMessage message = survivor.message();
                 try (var ignored = TraceMdc.scope(message.traceId())) {
@@ -136,8 +133,8 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
             inboxRepository.markProcessed(region(), outcome.processed);
             inboxRepository.markAggregated(region(), outcome.aggregatedAway);
             inboxRepository.markBlocked(region(), outcome.blocked);
-            inboxRepository.markSuperseded(region(), outcome.superseded);
             inboxRepository.markInvalid(region(), invalid, "No readable event type in payload");
+            inboxRepository.markInvalid(region(), outcome.invalid, "TradeEvent payload failed to deserialize");
             inboxRepository.markProcessFailure(region(), outcome.failed, "Transform failed in PROCESS stage");
             log.debug(
                     "[{}] Drained {}: {} published, {} processed, {} blocked, {} aggregated, {} invalid, {} failed, {} gate updates",
@@ -147,7 +144,7 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
                     outcome.processed.size(),
                     outcome.blocked.size(),
                     outcome.aggregatedAway.size(),
-                    invalid.size(),
+                    invalid.size() + outcome.invalid.size(),
                     outcome.failed.size(),
                     outcome.gateKeys.size());
         });
@@ -181,7 +178,7 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
         switch (emitAs) {
             case CREATED -> onCreated(aggregation, key, state, outcome);
             case AMENDED -> onAmended(aggregation, key, state, outcome);
-            case BUSTED -> onBusted(aggregation, key, state, outcome);
+            case DELETED -> onDeleted(aggregation, key, state, outcome);
         }
     }
 
@@ -213,10 +210,21 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
                 outcome.blocked.add(aggregation.survivor().id());
             }
             case VOID -> {
-                // Trade was busted before any CREATE was emitted — an amendment is meaningless.
+                // Trade was deleted before any CREATE was emitted — an amendment is meaningless.
                 outcome.processed.add(aggregation.survivor().id());
             }
-            default -> { // NONE | FAILED — auto-promote the full-snapshot amendment into a CREATE
+            case FAILED -> {
+                // The trade's CREATE failed terminally (parked). The amend is a full snapshot, so promote
+                // it into a CREATE in the dead one's place — the trade self-heals with no human in the loop.
+                if (emit(aggregation, TradeEventType.CREATED, outcome)) {
+                    setGate(key, CreateState.IN_FLIGHT, outcome);
+                    final int retired =
+                            outboxRepository.supersedeParkedForKey(region(), key, "Superseded by promoted AMEND");
+                    log.info("[{}] Auto-promoted AMEND to CREATE for trade key={}; retired {} parked CREATE row(s)",
+                            processIdentifier(), key, retired);
+                }
+            }
+            default -> { // NONE — no CREATE ever seen; the full-snapshot amend establishes the trade as a CREATE
                 if (emit(aggregation, TradeEventType.CREATED, outcome)) {
                     setGate(key, CreateState.IN_FLIGHT, outcome);
                 }
@@ -224,24 +232,53 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
         }
     }
 
-    private void onBusted(
+    private void onDeleted(
             final TradeAggregation aggregation, final String key, final CreateState state, final Outcome outcome) {
         if (state == CreateState.SENT) {
-            emit(aggregation, TradeEventType.BUSTED, outcome);
+            // Downstream already has the CREATE — it must learn of the delete; the trade is then gone.
+            // (If the delete payload is itself INVALID, emit() returns false: leave the gate SENT so a
+            // replayed delete can still retract the trade.)
+            if (emit(aggregation, TradeEventType.DELETED, outcome)) {
+                setGate(key, CreateState.VOID, outcome);
+            }
             return;
         }
-        // Born and killed before downstream saw it: cancel any not-yet-delivered CREATE and void the trade.
-        final int cancelled = outboxRepository.parkUnsentForKey(region(), key, "Trade busted before CREATE delivered");
+        // Try to cancel a not-yet-delivered CREATE. If a RELAY delivery is in flight this UPDATE blocks
+        // on its row lock, so by the time it returns the race is already decided.
+        final int cancelled = outboxRepository.parkUnsentForKey(region(), key, "Trade deleted before CREATE delivered");
         if (cancelled > 0) {
-            log.info("[{}] Cancelled {} unsent row(s) for busted trade key={}", processIdentifier(), cancelled, key);
+            // Parked the staged CREATE before delivery — downstream never saw the trade, so emit nothing.
+            log.info("[{}] Cancelled {} unsent row(s) for deleted trade key={}", processIdentifier(), cancelled, key);
+            setGate(key, CreateState.VOID, outcome);
+            outcome.processed.add(aggregation.survivor().id());
+            return;
         }
+        // Nothing to cancel: either no CREATE was ever staged, or RELAY delivered it while we raced. The
+        // tick-start gate read may be stale, so re-read now — the park above has serialised behind any
+        // in-flight RELAY commit, which flips the outbox row and the gate to SENT atomically.
+        final CreateState current =
+                tradeGateRepository.statesFor(region(), List.of(key)).getOrDefault(key, CreateState.NONE);
+        if (current == CreateState.SENT) {
+            // Delivery won the race: the CREATE reached downstream, so the delete must follow it.
+            log.info("[{}] CREATE delivered while deleting key={}; emitting DELETE to retract it",
+                    processIdentifier(), key);
+            if (emit(aggregation, TradeEventType.DELETED, outcome)) {
+                setGate(key, CreateState.VOID, outcome);
+            }
+            return;
+        }
+        // No CREATE ever reached downstream (never staged, or failed terminally) — emit nothing.
         setGate(key, CreateState.VOID, outcome);
         outcome.processed.add(aggregation.survivor().id());
     }
 
     /**
-     * Re-types (if needed), enriches and filters the survivor's payload, staging an outbox event when
-     * the filter keeps it. Returns {@code true} if an event was actually staged for publication.
+     * Re-types (if needed) the survivor's payload to the final type, deserializes it to a typed
+     * {@link TradeEvent} read view, and asks the filter whether to keep it — staging the <b>faithful</b>
+     * payload (never the rebuilt object) when so. If the body cannot be bound to a {@code TradeEvent}
+     * the row is marked INVALID (retained, never published): the type already parsed in {@code doTick}
+     * and unknown fields are tolerated, so a bind failure is a real structural defect, not something to
+     * forward past the business rules. Returns {@code true} iff an event was staged for publication.
      */
     private boolean emit(final TradeAggregation aggregation, final TradeEventType finalType, final Outcome outcome) {
         final ParsedTradeEvent survivor = aggregation.survivor();
@@ -249,8 +286,14 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
         final String payload = survivor.type() == finalType
                 ? message.rawPayload()
                 : tradeEventCodec.rewriteType(message.rawPayload(), finalType);
-        final String enriched = tradeEnricher.enrich(region(), payload);
-        final boolean keep = tradeFilter.keep(region(), enriched);
+        final Optional<TradeEvent> view = tradeEventCodec.deserialize(payload);
+        if (view.isEmpty()) {
+            log.warn("[{}] TradeEvent failed to deserialize for inbox id={}; marking INVALID",
+                    processIdentifier(), message.id());
+            outcome.invalid.add(message.id());
+            return false;
+        }
+        final boolean keep = tradeFilter.keep(region(), view.get());
         if (keep) {
             outcome.toPublish.add(new OutboxEvent(
                     null,
@@ -259,7 +302,7 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
                     publishedTopic,
                     message.messageKey(),
                     finalType,
-                    enriched,
+                    payload,
                     message.id(),
                     message.traceId(),
                     message.headers()));
@@ -279,8 +322,8 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
         private final List<Long> processed = new ArrayList<>();
         private final List<Long> aggregatedAway = new ArrayList<>();
         private final List<Long> blocked = new ArrayList<>();
-        private final List<Long> superseded = new ArrayList<>();
         private final List<Long> failed = new ArrayList<>();
+        private final List<Long> invalid = new ArrayList<>();
         private final List<String> gateKeys = new ArrayList<>();
     }
 }

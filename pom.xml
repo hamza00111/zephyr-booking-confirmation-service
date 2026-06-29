@@ -46,11 +46,17 @@
             <artifactId>spring-kafka</artifactId>
         </dependency>
 
-        <!-- Jackson (minimal TradeEvent introspection in the PROCESS stage) -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </dependency>
+        <!-- Jackson 3 (tools.jackson) + jackson-annotations (for the TradeEvent mix-in) are inherited
+             transitively via the Spring Boot 4 starter, exactly as in the publisher service. -->
+
+        <!-- Shared trade domain model: TradeEvent + Trade{Created,Amended,Deleted}Event
+             (package com.bnpparibas.dec.zephyr.domain.trade.events). The publisher consumes these
+             un-declared (inherited from the parent BOM). If they do NOT resolve transitively for this
+             module, declare the artifact explicitly here (version managed by the parent BOM):
+               <dependency>
+                   <groupId>com.bnpparibas.dec</groupId>
+                   <artifactId>VERIFY-zephyr-domain-artifact-id</artifactId>
+               </dependency> -->
 
         <!-- Resilience4j -->
         <dependency>

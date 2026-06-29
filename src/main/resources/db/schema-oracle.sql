@@ -13,7 +13,7 @@ CREATE TABLE BOOKING_CONFIRMATION_INBOX (
     KAFKA_PARTITION   NUMBER,
     KAFKA_OFFSET      NUMBER,
     MESSAGE_KEY       VARCHAR2(512),
-    EVENT_TYPE        VARCHAR2(16),                    -- CREATED | AMENDED | BUSTED (set in PROCESS once parsed)
+    EVENT_TYPE        VARCHAR2(16),                    -- CREATED | AMENDED | DELETED (set in PROCESS once parsed)
     TRACE_ID          VARCHAR2(64),                    -- correlation id from the event body ($.traceId)
     HEADERS           CLOB,                            -- inbound headers as JSON (optional)
     RAW_PAYLOAD       CLOB          NOT NULL,          -- pivot JSON as received
@@ -36,11 +36,11 @@ CREATE TABLE BOOKING_CONFIRMATION_OUTBOX (
     IDEMPOTENCY_KEY   VARCHAR2(512) NOT NULL,
     DESTINATION       VARCHAR2(255) NOT NULL,          -- published.<region> topic
     MESSAGE_KEY       VARCHAR2(512),
-    EVENT_TYPE        VARCHAR2(16),                    -- CREATED | AMENDED | BUSTED (drives the create-barrier gate)
+    EVENT_TYPE        VARCHAR2(16),                    -- CREATED | AMENDED | DELETED (drives the create-barrier gate)
     TRACE_ID          VARCHAR2(64),                    -- correlation id propagated from the inbox
     EVENT_PAYLOAD     CLOB          NOT NULL,          -- serialized event payload
     HEADERS           CLOB,
-    -- NEW | SENT | SEND_FAILURE | PARKED  (PARKED = retained, alerted, replayable; never silently dropped)
+    -- NEW | SENT | SEND_FAILURE | PARKED | SUPERSEDED  (PARKED = retained/alerted/replayable; SUPERSEDED = parked CREATE retired by a promoted AMEND)
     PROCESSING_STATUS VARCHAR2(32)  NOT NULL,
     RETRY_COUNT       NUMBER        DEFAULT 0 NOT NULL,
     NEXT_ATTEMPT_AT   TIMESTAMP,                       -- backoff gate for SEND_FAILURE requeue (null = ready)
@@ -59,14 +59,14 @@ CREATE TABLE BOOKING_CONFIRMATION_REGION_LOCK (
 );
 
 -- Create-barrier ledger: per-trade memory of whether the downstream third party has been told
--- a trade exists yet. The third party REJECTS an AMEND/BUST whose CREATE it never received, so an
+-- a trade exists yet. The third party REJECTS an AMEND/DELETE whose CREATE it never received, so an
 -- AMEND must never be relayed before its CREATE reaches SENT. One row per (region, message key).
 --
 --   NONE       no CREATE seen yet for this key
 --   IN_FLIGHT  a CREATE has been staged to the outbox but is not yet SENT (amendments wait)
 --   SENT       a CREATE has been delivered downstream (amendments may flow)
 --   FAILED     the CREATE failed terminally (INVALID/PARKED) — a waiting AMEND is auto-promoted
---   VOID       the trade was busted before any CREATE was emitted — emit nothing
+--   VOID       the trade was deleted before any CREATE was emitted — emit nothing
 CREATE TABLE BOOKING_CONFIRMATION_TRADE_GATE (
     REGION       VARCHAR2(8)   NOT NULL,
     MESSAGE_KEY  VARCHAR2(512) NOT NULL,

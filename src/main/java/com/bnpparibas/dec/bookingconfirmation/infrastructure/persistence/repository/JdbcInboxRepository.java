@@ -71,13 +71,6 @@ public class JdbcInboxRepository implements InboxRepository {
             WHERE ID IN (:ids) AND REGION = :region
             """;
 
-    private static final String MARK_SUPERSEDED =
-            """
-            UPDATE BOOKING_CONFIRMATION_INBOX
-            SET PROCESSING_STATUS = 'SUPERSEDED', UPDATED_ON = SYSTIMESTAMP
-            WHERE ID IN (:ids) AND REGION = :region
-            """;
-
     // Release the barrier for a delivered trade: BLOCKED -> NEW, re-drained in ID order next tick.
     private static final String RELEASE_BLOCKED =
             """
@@ -150,7 +143,7 @@ public class JdbcInboxRepository implements InboxRepository {
             """
             DELETE FROM BOOKING_CONFIRMATION_INBOX
             WHERE REGION = :region
-              AND PROCESSING_STATUS IN ('PROCESSED', 'AGGREGATED', 'SUPERSEDED')
+              AND PROCESSING_STATUS IN ('PROCESSED', 'AGGREGATED')
               AND UPDATED_ON < SYSTIMESTAMP - NUMTODSINTERVAL(:retentionDays, 'DAY')
             """;
 
@@ -233,16 +226,6 @@ public class JdbcInboxRepository implements InboxRepository {
         }
         jdbcTemplate.update(
                 MARK_BLOCKED,
-                new MapSqlParameterSource().addValue("ids", ids).addValue("region", region.name()));
-    }
-
-    @Override
-    public void markSuperseded(final Region region, final List<Long> ids) {
-        if (ids.isEmpty()) {
-            return;
-        }
-        jdbcTemplate.update(
-                MARK_SUPERSEDED,
                 new MapSqlParameterSource().addValue("ids", ids).addValue("region", region.name()));
     }
 

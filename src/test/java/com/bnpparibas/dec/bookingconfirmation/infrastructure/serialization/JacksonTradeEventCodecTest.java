@@ -9,10 +9,11 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import tools.jackson.databind.json.JsonMapper;
 
 class JacksonTradeEventCodecTest {
 
-    private final JacksonTradeEventCodec codec = new JacksonTradeEventCodec();
+    private final JacksonTradeEventCodec codec = new JacksonTradeEventCodec(JsonMapper.builder().build());
 
     @ParameterizedTest
     @MethodSource("typedPayloads")
@@ -24,10 +25,10 @@ class JacksonTradeEventCodecTest {
         return Stream.of(
                 Arguments.of("{\"eventType\":\"CREATED\"}", TradeEventType.CREATED),
                 Arguments.of("{\"eventType\":\"AMENDED\"}", TradeEventType.AMENDED),
-                Arguments.of("{\"eventType\":\"BUSTED\"}", TradeEventType.BUSTED),
+                Arguments.of("{\"eventType\":\"DELETED\"}", TradeEventType.DELETED),
                 Arguments.of("{\"eventType\":\"created\"}", TradeEventType.CREATED),       // case-insensitive
                 Arguments.of("{\"@type\":\"TRADE_AMENDED\"}", TradeEventType.AMENDED),      // @type fallback
-                Arguments.of("{\"@type\":\"TRADE_BUSTED\",\"eventId\":\"x\"}", TradeEventType.BUSTED));
+                Arguments.of("{\"@type\":\"TRADE_DELETED\",\"eventId\":\"x\"}", TradeEventType.DELETED));
     }
 
     @ParameterizedTest

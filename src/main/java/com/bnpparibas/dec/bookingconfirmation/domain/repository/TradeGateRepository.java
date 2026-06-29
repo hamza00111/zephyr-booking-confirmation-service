@@ -29,4 +29,11 @@ public interface TradeGateRepository {
      * @return the keys whose state actually transitioned to SENT (i.e. were not already SENT).
      */
     void markSent(Region region, Collection<String> messageKeys);
+
+    /**
+     * Sets the given keys to {@link CreateState#FAILED} (called by RELAY when a CREATE is parked as
+     * poison). A later AMEND for the key then auto-promotes into a CREATE, so the trade self-heals
+     * instead of its amendments blocking forever behind a CREATE that will never be delivered.
+     */
+    void markFailed(Region region, Collection<String> messageKeys);
 }

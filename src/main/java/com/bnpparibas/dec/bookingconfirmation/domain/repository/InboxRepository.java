@@ -25,14 +25,11 @@ public interface InboxRepository {
 
     void markProcessed(Region region, List<Long> ids);
 
-    /** Marks rows collapsed away by per-trade aggregation (superseded or netted out, never published). */
+    /** Marks rows collapsed away by per-trade aggregation (replaced or netted out, never published). */
     void markAggregated(Region region, List<Long> ids);
 
-    /** Holds an AMEND/BUST behind the create-barrier until its trade's CREATE reaches SENT. */
+    /** Holds an AMEND/DELETE behind the create-barrier until its trade's CREATE reaches SENT. */
     void markBlocked(Region region, List<Long> ids);
-
-    /** Closes a stuck CREATE because a later AMEND was promoted into a CREATE in its place. */
-    void markSuperseded(Region region, List<Long> ids);
 
     /**
      * Releases rows held behind the create-barrier for the given trade keys: {@code BLOCKED -> NEW}.
@@ -61,7 +58,7 @@ public interface InboxRepository {
     int requeueFailed(Region region, int maxRetries);
 
     /**
-     * Deletes fully-processed rows ({@code PROCESSED}/{@code AGGREGATED}/{@code SUPERSEDED}) older than
+     * Deletes fully-processed rows ({@code PROCESSED}/{@code AGGREGATED}) older than
      * {@code retentionDays}. Never deletes a non-success row ({@code PARKED}/{@code INVALID}/in-flight)
      * — that would be silent data loss.
      *

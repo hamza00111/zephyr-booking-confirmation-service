@@ -22,6 +22,6 @@ public class TransformConfig {
     @Bean
     @ConditionalOnMissingBean
     public TradeFilter allowAllTradeFilter() {
-        return (region, pivotPayload) -> true;
+        return (region, tradeEvent) -> true;
     }
 }

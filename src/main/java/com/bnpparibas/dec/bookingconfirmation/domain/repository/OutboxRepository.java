@@ -43,7 +43,7 @@ public interface OutboxRepository {
 
     /**
      * Parks any not-yet-delivered ({@code NEW}/{@code SEND_FAILURE}) rows for a trade key so they are
-     * never published. Used by the create-barrier when a trade is busted before its CREATE was
+     * never published. Used by the create-barrier when a trade is deleted before its CREATE was
      * delivered: the staged CREATE must not reach downstream. Rows are retained (audited), not deleted.
      *
      * @return number of rows parked.
@@ -51,8 +51,17 @@ public interface OutboxRepository {
     int parkUnsentForKey(Region region, String messageKey, String reason);
 
     /**
-     * Deletes delivered ({@code SENT}) rows older than {@code retentionDays}. Never deletes a
-     * non-{@code SENT} row ({@code PARKED}/{@code SEND_FAILURE}/{@code NEW}) — that would be silent loss.
+     * Retires the parked CREATE for a trade key ({@code PARKED -> SUPERSEDED}) when a later AMEND was
+     * auto-promoted into a CREATE in its place. The dead CREATE is resolved (the trade self-healed), so
+     * it drops out of the parked review queue — retained as audit until retention purges it.
+     *
+     * @return number of rows superseded.
+     */
+    int supersedeParkedForKey(Region region, String messageKey, String reason);
+
+    /**
+     * Deletes resolved ({@code SENT}/{@code SUPERSEDED}) rows older than {@code retentionDays}. Never
+     * deletes a {@code PARKED}/{@code SEND_FAILURE}/{@code NEW} row — that would be silent loss.
      *
      * @return number of rows purged.
      */

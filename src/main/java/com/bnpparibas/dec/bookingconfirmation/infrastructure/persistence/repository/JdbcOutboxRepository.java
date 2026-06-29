@@ -93,7 +93,7 @@ public class JdbcOutboxRepository implements OutboxRepository {
               AND (NEXT_ATTEMPT_AT IS NULL OR NEXT_ATTEMPT_AT <= SYSTIMESTAMP)
             """;
 
-    // Cancel a not-yet-delivered CREATE for a busted trade: park it so it is never published (retained).
+    // Cancel a not-yet-delivered CREATE for a deleted trade: park it so it is never published (retained).
     private static final String PARK_UNSENT_FOR_KEY =
             """
             UPDATE BOOKING_CONFIRMATION_OUTBOX
@@ -106,12 +106,25 @@ public class JdbcOutboxRepository implements OutboxRepository {
               AND MESSAGE_KEY = :messageKey
             """;
 
-    // Retention: only delivered rows are deletable. PARKED/SEND_FAILURE/NEW are never purged.
+    // Retire a parked CREATE that a later AMEND was promoted in place of: PARKED -> SUPERSEDED.
+    private static final String SUPERSEDE_PARKED_FOR_KEY =
+            """
+            UPDATE BOOKING_CONFIRMATION_OUTBOX
+            SET PROCESSING_STATUS = 'SUPERSEDED',
+                ERROR_MESSAGE     = :errorMessage,
+                UPDATED_ON        = SYSTIMESTAMP
+            WHERE PROCESSING_STATUS = 'PARKED'
+              AND EVENT_TYPE = 'CREATED'
+              AND REGION = :region
+              AND MESSAGE_KEY = :messageKey
+            """;
+
+    // Retention: only resolved rows are deletable. PARKED/SEND_FAILURE/NEW are never purged.
     private static final String PURGE_SENT =
             """
             DELETE FROM BOOKING_CONFIRMATION_OUTBOX
             WHERE REGION = :region
-              AND PROCESSING_STATUS = 'SENT'
+              AND PROCESSING_STATUS IN ('SENT', 'SUPERSEDED')
               AND UPDATED_ON < SYSTIMESTAMP - NUMTODSINTERVAL(:retentionDays, 'DAY')
             """;
 
@@ -218,6 +231,16 @@ public class JdbcOutboxRepository implements OutboxRepository {
     public int parkUnsentForKey(final Region region, final String messageKey, final String reason) {
         return jdbcTemplate.update(
                 PARK_UNSENT_FOR_KEY,
+                new MapSqlParameterSource()
+                        .addValue("region", region.name())
+                        .addValue("messageKey", messageKey)
+                        .addValue("errorMessage", JdbcInboxRepository.truncate(reason)));
+    }
+
+    @Override
+    public int supersedeParkedForKey(final Region region, final String messageKey, final String reason) {
+        return jdbcTemplate.update(
+                SUPERSEDE_PARKED_FOR_KEY,
                 new MapSqlParameterSource()
                         .addValue("region", region.name())
                         .addValue("messageKey", messageKey)

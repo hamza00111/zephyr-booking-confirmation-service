@@ -8,7 +8,7 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>{@code survivor} is the event whose payload gets published, re-typed as {@code emitAs} when
  * the two differ (Created+Amended collapses into a CREATED event carrying the amended payload). A
- * {@code null} survivor means the group nets out to nothing — the trade was created and busted
+ * {@code null} survivor means the group nets out to nothing — the trade was created and deleted
  * within the same drain, so downstream never needs to hear about it. {@code collapsedIds} are the
  * inbox rows superseded or netted out by the aggregation — marked AGGREGATED, never published.
  */

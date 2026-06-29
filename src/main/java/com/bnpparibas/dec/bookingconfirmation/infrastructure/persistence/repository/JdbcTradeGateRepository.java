@@ -74,6 +74,17 @@ public class JdbcTradeGateRepository implements TradeGateRepository {
         jdbcTemplate.batchUpdate(MERGE_STATE, batch);
     }
 
+    @Override
+    public void markFailed(final Region region, final Collection<String> messageKeys) {
+        if (messageKeys.isEmpty()) {
+            return;
+        }
+        final SqlParameterSource[] batch = messageKeys.stream()
+                .map(key -> params(region, key, CreateState.FAILED))
+                .toArray(SqlParameterSource[]::new);
+        jdbcTemplate.batchUpdate(MERGE_STATE, batch);
+    }
+
     private static MapSqlParameterSource params(final Region region, final String messageKey, final CreateState state) {
         return new MapSqlParameterSource()
                 .addValue("region", region.name())
