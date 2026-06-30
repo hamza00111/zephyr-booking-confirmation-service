@@ -1,8 +1,8 @@
 package com.bnpparibas.dec.bookingconfirmation.domain.model;
 
 /**
- * The three scheduled, lock-guarded pipeline stages (the event-driven CONSUME stage is the
- * Kafka listener and is not represented here).
+ * The three scheduled pipeline stages (the event-driven CONSUME stage is the Kafka listener and is
+ * not represented here).
  *
  * <ul>
  *   <li>{@code PROCESS} — drain the inbox, transform, write to the outbox.</li>
@@ -15,7 +15,7 @@ public enum ProcessType {
     RELAY,
     REQUEUE;
 
-    /** Distributed-lock key for a region+stage, e.g. {@code AMER.RELAY}. */
+    /** Human-readable identifier for a region+stage, e.g. {@code AMER.RELAY}. */
     public String keyFor(final Region region) {
         return region.name() + "." + name();
     }

@@ -5,13 +5,11 @@ import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEnriche
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeFilter;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventCodec;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.ParsedTradeEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeAggregation;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
-import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingProcessService;
@@ -47,9 +45,7 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
 
     public DefaultBookingProcessService(
             final Region region,
-            final long tickIntervalMs,
             final int batchSize,
-            final int lockTtlMultiplier,
             final String publishedTopic,
             final InboxRepository inboxRepository,
             final OutboxRepository outboxRepository,
@@ -57,10 +53,8 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
             final TradeEventAggregator tradeEventAggregator,
             final TradeEnricher tradeEnricher,
             final TradeFilter tradeFilter,
-            final TransactionTemplate transactionTemplate,
-            final DistributedLockRepository lockRepository,
-            final InstanceId instanceId) {
-        super(region, tickIntervalMs, lockTtlMultiplier, lockRepository, instanceId);
+            final TransactionTemplate transactionTemplate) {
+        super(region);
         this.batchSize = batchSize;
         this.publishedTopic = publishedTopic;
         this.inboxRepository = inboxRepository;

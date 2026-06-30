@@ -38,7 +38,7 @@ class BaseRegionServiceRegistryTest {
     }
 
     private static RegionProperties region(boolean active) {
-        return new RegionProperties(active, 3, "internal", "published");
+        return new RegionProperties(active, "internal", "published");
     }
 
     private static BookingConfirmationProperties properties(Map<Region, RegionProperties> regions) {

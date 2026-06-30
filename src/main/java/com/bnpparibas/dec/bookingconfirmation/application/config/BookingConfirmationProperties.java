@@ -10,8 +10,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * Root configuration bound from {@code app.booking-confirmation}.
  *
  * <p>Per-region settings live under {@code regions}; per-stage settings (process/relay/requeue) and
- * cross-cutting settings (consumer/scheduler/resilience) are global. Lock TTL for a stage is derived
- * from the stage tick interval and the region's {@code lockTtlMultiplier}.
+ * cross-cutting settings (consumer/scheduler/resilience) are global.
  */
 @ConfigurationProperties(prefix = "app.booking-confirmation")
 public record BookingConfirmationProperties(
@@ -23,10 +22,9 @@ public record BookingConfirmationProperties(
         RequeueProperties requeue,
         ResilienceProperties resilience) {
 
-    /** Per-region isolation unit: own topics, lock, circuit breaker, scheduled tasks. */
+    /** Per-region isolation unit: own topics, circuit breaker, scheduled tasks. */
     public record RegionProperties(
             @DefaultValue("true") boolean active,
-            @DefaultValue("3") int lockTtlMultiplier,
             String internalTopic,
             String publishedTopic) {}
 

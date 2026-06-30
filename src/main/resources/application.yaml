@@ -74,21 +74,18 @@ app:
       tick-interval-ms: ${BC_REQUEUE_TICK_MS:60000}
       max-retries: ${BC_REQUEUE_MAX_RETRIES:5}
 
-    # Per-region isolation: own lock, circuit breaker, scheduled tasks, topics.
+    # Per-region isolation: own circuit breaker, scheduled tasks, topics.
     regions:
       AMER:
         active: ${AMER_ACTIVE:true}
-        lock-ttl-multiplier: ${AMER_LOCK_TTL_MULTIPLIER:3}
         internal-topic: ${AMER_INTERNAL_TOPIC:dev.booking.trade.internal.amer}
         published-topic: ${AMER_PUBLISHED_TOPIC:dev.booking.trade.published.amer}
       APAC:
         active: ${APAC_ACTIVE:true}
-        lock-ttl-multiplier: ${APAC_LOCK_TTL_MULTIPLIER:3}
         internal-topic: ${APAC_INTERNAL_TOPIC:dev.booking.trade.internal.apac}
         published-topic: ${APAC_PUBLISHED_TOPIC:dev.booking.trade.published.apac}
       EMEA:
         active: ${EMEA_ACTIVE:true}
-        lock-ttl-multiplier: ${EMEA_LOCK_TTL_MULTIPLIER:3}
         internal-topic: ${EMEA_INTERNAL_TOPIC:dev.booking.trade.internal.emea}
         published-topic: ${EMEA_PUBLISHED_TOPIC:dev.booking.trade.published.emea}
 

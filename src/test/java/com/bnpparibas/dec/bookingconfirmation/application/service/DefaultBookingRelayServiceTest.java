@@ -1,20 +1,15 @@
 package com.bnpparibas.dec.bookingconfirmation.application.service;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.bnpparibas.dec.bookingconfirmation.domain.event.DomainEventPublisher;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.ProcessType;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
-import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,21 +27,15 @@ import org.springframework.transaction.support.TransactionTemplate;
 @ExtendWith(MockitoExtension.class)
 class DefaultBookingRelayServiceTest {
 
-    private static final InstanceId INSTANCE = new InstanceId("test-instance");
-
     @Mock
     private OutboxRepository outboxRepository;
 
     @Mock
     private DomainEventPublisher publisher;
 
-    @Mock
-    private DistributedLockRepository lockRepository;
-
     @Test
     void tick_shouldMarkSentForSuccessesAndSendFailureForFailures() {
         var service = relayService();
-        lockAcquired();
         var ok = outboxEvent(1L);
         var bad = outboxEvent(2L);
         given(outboxRepository.findNew(Region.AMER, 100)).willReturn(List.of(ok, bad));
@@ -64,7 +53,6 @@ class DefaultBookingRelayServiceTest {
     @Test
     void tick_shouldNotPublish_whenOutboxEmpty() {
         var service = relayService();
-        lockAcquired();
         given(outboxRepository.findNew(Region.AMER, 100)).willReturn(List.of());
 
         service.tick();
@@ -75,13 +63,7 @@ class DefaultBookingRelayServiceTest {
 
     private DefaultBookingRelayService relayService() {
         return new DefaultBookingRelayService(
-                Region.AMER, 1000, 100, 1, outboxRepository, publisher, transactionTemplate(), lockRepository, INSTANCE);
-    }
-
-    private void lockAcquired() {
-        given(lockRepository.acquireOrRefresh(
-                        eq(Region.AMER), eq(ProcessType.RELAY), eq(INSTANCE), eq(Duration.ofMillis(1000))))
-                .willReturn(true);
+                Region.AMER, 100, outboxRepository, publisher, transactionTemplate());
     }
 
     private static OutboxEvent outboxEvent(long id) {

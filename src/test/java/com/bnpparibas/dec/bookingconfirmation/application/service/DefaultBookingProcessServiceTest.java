@@ -2,22 +2,17 @@ package com.bnpparibas.dec.bookingconfirmation.application.service;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventCodec;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.ProcessType;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
-import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.TradeEventAggregator;
-import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -33,7 +28,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 @ExtendWith(MockitoExtension.class)
 class DefaultBookingProcessServiceTest {
 
-    private static final InstanceId INSTANCE = new InstanceId("test-instance");
     private static final String PAYLOAD = "{\"eventType\":\"CREATED\",\"traceId\":\"trace-1\"}";
 
     @Mock
@@ -45,13 +39,9 @@ class DefaultBookingProcessServiceTest {
     @Mock
     private TradeEventCodec tradeEventCodec;
 
-    @Mock
-    private DistributedLockRepository lockRepository;
-
     @Test
     void tick_shouldStageOutboxEventCarryingTraceId_andMarkProcessed_whenSingleCreated() {
         var service = processService();
-        lockAcquired();
         given(inboxRepository.findNew(Region.AMER, 200)).willReturn(List.of(inbox(1L, "K1")));
         given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
 
@@ -65,7 +55,6 @@ class DefaultBookingProcessServiceTest {
     @Test
     void tick_shouldMarkInvalid_whenEventTypeUnreadable() {
         var service = processService();
-        lockAcquired();
         given(inboxRepository.findNew(Region.AMER, 200)).willReturn(List.of(inbox(1L, "K1")));
         given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.empty());
 
@@ -78,7 +67,6 @@ class DefaultBookingProcessServiceTest {
     @Test
     void tick_shouldDoNothing_whenInboxEmpty() {
         var service = processService();
-        lockAcquired();
         given(inboxRepository.findNew(Region.AMER, 200)).willReturn(List.of());
 
         service.tick();
@@ -89,16 +77,10 @@ class DefaultBookingProcessServiceTest {
 
     private DefaultBookingProcessService processService() {
         return new DefaultBookingProcessService(
-                Region.AMER, 1000, 200, 1, "published",
+                Region.AMER, 200, "published",
                 inboxRepository, outboxRepository, tradeEventCodec, new TradeEventAggregator(),
                 (region, payload) -> payload, (region, payload) -> true,
-                transactionTemplate(), lockRepository, INSTANCE);
-    }
-
-    private void lockAcquired() {
-        given(lockRepository.acquireOrRefresh(
-                        eq(Region.AMER), eq(ProcessType.PROCESS), eq(INSTANCE), eq(Duration.ofMillis(1000))))
-                .willReturn(true);
+                transactionTemplate());
     }
 
     private static InboxMessage inbox(long id, String messageKey) {

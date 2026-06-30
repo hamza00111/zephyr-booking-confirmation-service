@@ -1,8 +1,6 @@
 package com.bnpparibas.dec.bookingconfirmation.application.service;
 
-import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
-import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingRequeueService;
 
@@ -18,13 +16,9 @@ public class DefaultBookingRequeueService extends AbstractRegionScopedService im
 
     public DefaultBookingRequeueService(
             final Region region,
-            final long tickIntervalMs,
             final int maxRetries,
-            final int lockTtlMultiplier,
-            final OutboxRepository outboxRepository,
-            final DistributedLockRepository lockRepository,
-            final InstanceId instanceId) {
-        super(region, tickIntervalMs, lockTtlMultiplier, lockRepository, instanceId);
+            final OutboxRepository outboxRepository) {
+        super(region);
         this.maxRetries = maxRetries;
         this.outboxRepository = outboxRepository;
     }
