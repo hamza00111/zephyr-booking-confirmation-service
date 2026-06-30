@@ -22,9 +22,9 @@ import org.springframework.stereotype.Component;
  * Initializes the three stage registries and schedules a {@code fixedDelay} PROCESS, RELAY, and
  * REQUEUE task for each active region in the shared scheduler.
  *
- * <p>Every task is fully region-bound; each tick self-guards on the pause flag. Safe concurrency
- * across instances comes from each stage's {@code FOR UPDATE SKIP LOCKED} drain, so no coordination
- * lock is needed. On shutdown all futures are cancelled (in-flight ticks finish).
+ * <p>Every task is fully region-bound. Safe concurrency across instances comes from each stage's
+ * {@code FOR UPDATE SKIP LOCKED} drain, so no coordination lock is needed. On shutdown all futures
+ * are cancelled (in-flight ticks finish).
  */
 @Component
 @Slf4j
