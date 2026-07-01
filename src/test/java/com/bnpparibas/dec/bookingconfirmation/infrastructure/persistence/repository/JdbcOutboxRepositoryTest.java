@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -68,7 +69,14 @@ class JdbcOutboxRepositoryTest {
     void requeueFailed_shouldReturnPromotedRowCount() {
         given(jdbcTemplate.update(anyString(), any(SqlParameterSource.class))).willReturn(7);
 
-        assertThat(repository.requeueFailed(Region.AMER, 5)).isEqualTo(7);
+        assertThat(repository.requeueFailed(Region.AMER, Set.of(0), 5)).isEqualTo(7);
+    }
+
+    @Test
+    void requeueFailed_shouldNotTouchDatabase_whenNoOwnedPartitions() {
+        assertThat(repository.requeueFailed(Region.AMER, Set.of(), 5)).isZero();
+
+        verifyNoInteractions(jdbcTemplate);
     }
 
     private static OutboxEvent event(long inboxId) {

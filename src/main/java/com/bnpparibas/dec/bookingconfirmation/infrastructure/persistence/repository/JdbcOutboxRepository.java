@@ -5,6 +5,7 @@ import static com.bnpparibas.dec.bookingconfirmation.infrastructure.config.datas
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
+import java.util.Collection;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.RowMapper;
@@ -40,6 +41,7 @@ public class JdbcOutboxRepository implements OutboxRepository {
                 FROM BOOKING_CONFIRMATION_OUTBOX
                 WHERE PROCESSING_STATUS = 'NEW'
                   AND REGION = :region
+                  AND KAFKA_PARTITION IN (:partitions)
                 ORDER BY ID
                 FETCH FIRST :limit ROWS ONLY
             )
@@ -71,6 +73,7 @@ public class JdbcOutboxRepository implements OutboxRepository {
                 UPDATED_ON        = SYSTIMESTAMP
             WHERE PROCESSING_STATUS = 'SEND_FAILURE'
               AND REGION = :region
+              AND KAFKA_PARTITION IN (:partitions)
             """;
 
     private static final RowMapper<OutboxEvent> ROW_MAPPER = (rs, rowNum) -> new OutboxEvent(
@@ -113,9 +116,15 @@ public class JdbcOutboxRepository implements OutboxRepository {
     }
 
     @Override
-    public List<OutboxEvent> findNew(final Region region, final int limit) {
-        final MapSqlParameterSource params =
-                new MapSqlParameterSource().addValue("region", region.name()).addValue("limit", limit);
+    public List<OutboxEvent> findNew(
+            final Region region, final Collection<Integer> partitions, final int limit) {
+        if (partitions.isEmpty()) {
+            return List.of();
+        }
+        final MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("region", region.name())
+                .addValue("partitions", partitions)
+                .addValue("limit", limit);
         return jdbcTemplate.query(SELECT_NEW, params, ROW_MAPPER);
     }
 
@@ -142,9 +151,15 @@ public class JdbcOutboxRepository implements OutboxRepository {
     }
 
     @Override
-    public int requeueFailed(final Region region, final int maxRetries) {
+    public int requeueFailed(final Region region, final Collection<Integer> partitions, final int maxRetries) {
+        if (partitions.isEmpty()) {
+            return 0;
+        }
         return jdbcTemplate.update(
                 REQUEUE_FAILED,
-                new MapSqlParameterSource().addValue("region", region.name()).addValue("maxRetries", maxRetries));
+                new MapSqlParameterSource()
+                        .addValue("region", region.name())
+                        .addValue("partitions", partitions)
+                        .addValue("maxRetries", maxRetries));
     }
 }

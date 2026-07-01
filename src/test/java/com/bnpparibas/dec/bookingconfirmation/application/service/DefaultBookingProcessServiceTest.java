@@ -2,10 +2,13 @@ package com.bnpparibas.dec.bookingconfirmation.application.service;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventCodec;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
@@ -39,10 +42,12 @@ class DefaultBookingProcessServiceTest {
     @Mock
     private TradeEventCodec tradeEventCodec;
 
+    private final OwnedPartitions ownedPartitions = new OwnedPartitions();
+
     @Test
     void tick_shouldStageOutboxEventCarryingTraceId_andMarkProcessed_whenSingleCreated() {
         var service = processService();
-        given(inboxRepository.findNew(Region.AMER, 200)).willReturn(List.of(inbox(1L, "K1")));
+        given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(inbox(1L, "K1")));
         given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
 
         service.tick();
@@ -55,7 +60,7 @@ class DefaultBookingProcessServiceTest {
     @Test
     void tick_shouldMarkInvalid_whenEventTypeUnreadable() {
         var service = processService();
-        given(inboxRepository.findNew(Region.AMER, 200)).willReturn(List.of(inbox(1L, "K1")));
+        given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(inbox(1L, "K1")));
         given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.empty());
 
         service.tick();
@@ -67,7 +72,7 @@ class DefaultBookingProcessServiceTest {
     @Test
     void tick_shouldDoNothing_whenInboxEmpty() {
         var service = processService();
-        given(inboxRepository.findNew(Region.AMER, 200)).willReturn(List.of());
+        given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of());
 
         service.tick();
 
@@ -75,9 +80,23 @@ class DefaultBookingProcessServiceTest {
         verify(inboxRepository, never()).markProcessed(any(), any());
     }
 
+    @Test
+    void tick_shouldSkip_whenNoOwnedPartitions() {
+        var service = new DefaultBookingProcessService(
+                Region.AMER, new OwnedPartitions(), 200, "published",
+                inboxRepository, outboxRepository, tradeEventCodec, new TradeEventAggregator(),
+                (region, payload) -> payload, (region, payload) -> true,
+                transactionTemplate());
+
+        service.tick();
+
+        verifyNoInteractions(inboxRepository, outboxRepository);
+    }
+
     private DefaultBookingProcessService processService() {
+        ownedPartitions.add(Region.AMER, 0);
         return new DefaultBookingProcessService(
-                Region.AMER, 200, "published",
+                Region.AMER, ownedPartitions, 200, "published",
                 inboxRepository, outboxRepository, tradeEventCodec, new TradeEventAggregator(),
                 (region, payload) -> payload, (region, payload) -> true,
                 transactionTemplate());

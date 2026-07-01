@@ -1,28 +1,34 @@
 package com.bnpparibas.dec.bookingconfirmation.application.service;
 
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingConfirmationService;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * Common tick behaviour for the three scheduled, region-scoped stages.
  *
- * <p>{@link #tick()} is final: it delegates to {@link #doTick()} with exceptions logged and
- * contained so the scheduler keeps running for every other region/stage.
+ * <p>{@link #tick()} is final: it skips when this instance owns no partitions of the region, and
+ * otherwise delegates to {@link #doTick(Set)} with exceptions logged and contained so the scheduler
+ * keeps running for every other region/stage.
  *
- * <p>Concurrency across horizontally-scaled instances needs no application-level lock: each stage's
- * drain claims rows with {@code FOR UPDATE SKIP LOCKED}, so concurrent ticks on different JVMs take
- * disjoint rows and never double-process a row.
+ * <p>Concurrency across horizontally-scaled instances needs no application-level lock: each stage
+ * drains only the partitions this instance owns (ADR 0001), so a trade's events are processed and
+ * published by a single instance in order, and {@code FOR UPDATE SKIP LOCKED} fences the brief
+ * rebalance overlap.
  */
 public abstract class AbstractRegionScopedService implements BookingConfirmationService {
 
     protected final Logger log = LoggerFactory.getLogger(getClass());
 
     private final Region region;
+    private final OwnedPartitions ownedPartitions;
 
-    protected AbstractRegionScopedService(final Region region) {
+    protected AbstractRegionScopedService(final Region region, final OwnedPartitions ownedPartitions) {
         this.region = region;
+        this.ownedPartitions = ownedPartitions;
     }
 
     @Override
@@ -37,13 +43,17 @@ public abstract class AbstractRegionScopedService implements BookingConfirmation
 
     @Override
     public final void tick() {
+        final Set<Integer> owned = ownedPartitions.forRegion(region);
+        if (owned.isEmpty()) {
+            return; // this instance currently owns no partitions of this region — nothing to drain
+        }
         try {
-            doTick();
+            doTick(owned);
         } catch (final RuntimeException exception) {
             log.error("[{}] Tick failed", processIdentifier(), exception);
         }
     }
 
-    /** The stage-specific work. */
-    protected abstract void doTick();
+    /** The stage-specific work, restricted to the partitions this instance owns for the region. */
+    protected abstract void doTick(Set<Integer> ownedPartitions);
 }

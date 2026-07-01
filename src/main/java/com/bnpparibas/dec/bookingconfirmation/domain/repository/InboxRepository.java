@@ -2,13 +2,15 @@ package com.bnpparibas.dec.bookingconfirmation.domain.repository;
 
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
+import java.util.Collection;
 import java.util.List;
 
 /**
  * Persistence contract for the inbox (consume + transform half).
  *
- * <p>All reads/writes are region-scoped. {@link #findNew} must claim rows with
- * {@code FOR UPDATE SKIP LOCKED} so concurrent PROCESS ticks on different JVMs take disjoint rows.
+ * <p>All reads/writes are region-scoped. {@link #findNew} claims rows for the partitions this
+ * instance owns (ADR 0001) with {@code FOR UPDATE SKIP LOCKED}, so a trade's events are processed by
+ * a single instance in order.
  */
 public interface InboxRepository {
 
@@ -19,8 +21,12 @@ public interface InboxRepository {
      */
     boolean insertIfAbsent(InboxMessage message);
 
-    /** Claims up to {@code limit} {@code NEW} rows for the region using {@code FOR UPDATE SKIP LOCKED}. */
-    List<InboxMessage> findNew(Region region, int limit);
+    /**
+     * Claims up to {@code limit} {@code NEW} rows for the region, restricted to the given owned
+     * {@code partitions}, using {@code FOR UPDATE SKIP LOCKED}. Returns empty if {@code partitions}
+     * is empty.
+     */
+    List<InboxMessage> findNew(Region region, Collection<Integer> partitions, int limit);
 
     void markProcessed(Region region, List<Long> ids);
 

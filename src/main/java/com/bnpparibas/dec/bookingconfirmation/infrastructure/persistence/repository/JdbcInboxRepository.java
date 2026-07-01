@@ -5,6 +5,7 @@ import static com.bnpparibas.dec.bookingconfirmation.infrastructure.config.datas
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
+import java.util.Collection;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DuplicateKeyException;
@@ -42,6 +43,7 @@ public class JdbcInboxRepository implements InboxRepository {
                 FROM BOOKING_CONFIRMATION_INBOX
                 WHERE PROCESSING_STATUS = 'NEW'
                   AND REGION = :region
+                  AND KAFKA_PARTITION IN (:partitions)
                 ORDER BY ID
                 FETCH FIRST :limit ROWS ONLY
             )
@@ -121,9 +123,15 @@ public class JdbcInboxRepository implements InboxRepository {
     }
 
     @Override
-    public List<InboxMessage> findNew(final Region region, final int limit) {
-        final MapSqlParameterSource params =
-                new MapSqlParameterSource().addValue("region", region.name()).addValue("limit", limit);
+    public List<InboxMessage> findNew(
+            final Region region, final Collection<Integer> partitions, final int limit) {
+        if (partitions.isEmpty()) {
+            return List.of();
+        }
+        final MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("region", region.name())
+                .addValue("partitions", partitions)
+                .addValue("limit", limit);
         return jdbcTemplate.query(SELECT_NEW, params, ROW_MAPPER);
     }
 

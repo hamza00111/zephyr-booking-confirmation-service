@@ -1,5 +1,6 @@
 package com.bnpparibas.dec.bookingconfirmation.application.service;
 
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.DomainEventPublisher;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
@@ -8,6 +9,7 @@ import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingRelayService
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -27,11 +29,12 @@ public class DefaultBookingRelayService extends AbstractRegionScopedService impl
 
     public DefaultBookingRelayService(
             final Region region,
+            final OwnedPartitions ownedPartitions,
             final int batchSize,
             final OutboxRepository outboxRepository,
             final DomainEventPublisher publisher,
             final TransactionTemplate transactionTemplate) {
-        super(region);
+        super(region, ownedPartitions);
         this.batchSize = batchSize;
         this.outboxRepository = outboxRepository;
         this.publisher = publisher;
@@ -39,9 +42,9 @@ public class DefaultBookingRelayService extends AbstractRegionScopedService impl
     }
 
     @Override
-    protected void doTick() {
+    protected void doTick(final Set<Integer> ownedPartitions) {
         transactionTemplate.executeWithoutResult(status -> {
-            final List<OutboxEvent> batch = outboxRepository.findNew(region(), batchSize);
+            final List<OutboxEvent> batch = outboxRepository.findNew(region(), ownedPartitions, batchSize);
             if (batch.isEmpty()) {
                 return;
             }

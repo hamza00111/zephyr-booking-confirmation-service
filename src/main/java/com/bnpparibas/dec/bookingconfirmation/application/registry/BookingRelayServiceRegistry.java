@@ -2,6 +2,7 @@ package com.bnpparibas.dec.bookingconfirmation.application.registry;
 
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties.RegionProperties;
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.application.service.DefaultBookingRelayService;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.DomainEventPublisher;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
@@ -22,18 +23,21 @@ public class BookingRelayServiceRegistry extends BaseRegionServiceRegistry<Booki
     private final DomainEventPublisher publisher;
     private final BookingConfirmationCircuitBreakerRegistry breakerRegistry;
     private final TransactionTemplate transactionTemplate;
+    private final OwnedPartitions ownedPartitions;
 
     public BookingRelayServiceRegistry(
             final BookingConfirmationProperties properties,
             final OutboxRepository outboxRepository,
             final DomainEventPublisher publisher,
             final BookingConfirmationCircuitBreakerRegistry breakerRegistry,
-            final TransactionTemplate transactionTemplate) {
+            final TransactionTemplate transactionTemplate,
+            final OwnedPartitions ownedPartitions) {
         super(properties);
         this.outboxRepository = outboxRepository;
         this.publisher = publisher;
         this.breakerRegistry = breakerRegistry;
         this.transactionTemplate = transactionTemplate;
+        this.ownedPartitions = ownedPartitions;
     }
 
     @Override
@@ -41,6 +45,7 @@ public class BookingRelayServiceRegistry extends BaseRegionServiceRegistry<Booki
         breakerRegistry.register(region);
         return new DefaultBookingRelayService(
                 region,
+                ownedPartitions,
                 properties().relay().batchSize(),
                 outboxRepository,
                 publisher,

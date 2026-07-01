@@ -2,6 +2,7 @@ package com.bnpparibas.dec.bookingconfirmation.application.registry;
 
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties.RegionProperties;
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.application.service.DefaultBookingProcessService;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEnricher;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeFilter;
@@ -26,6 +27,7 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
     private final TradeEnricher tradeEnricher;
     private final TradeFilter tradeFilter;
     private final TransactionTemplate transactionTemplate;
+    private final OwnedPartitions ownedPartitions;
 
     public BookingProcessServiceRegistry(
             final BookingConfirmationProperties properties,
@@ -34,7 +36,8 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
             final TradeEventCodec tradeEventCodec,
             final TradeEnricher tradeEnricher,
             final TradeFilter tradeFilter,
-            final TransactionTemplate transactionTemplate) {
+            final TransactionTemplate transactionTemplate,
+            final OwnedPartitions ownedPartitions) {
         super(properties);
         this.inboxRepository = inboxRepository;
         this.outboxRepository = outboxRepository;
@@ -42,12 +45,14 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
         this.tradeEnricher = tradeEnricher;
         this.tradeFilter = tradeFilter;
         this.transactionTemplate = transactionTemplate;
+        this.ownedPartitions = ownedPartitions;
     }
 
     @Override
     protected BookingProcessService buildService(final Region region, final RegionProperties regionProperties) {
         return new DefaultBookingProcessService(
                 region,
+                ownedPartitions,
                 properties().process().batchSize(),
                 regionProperties.publishedTopic(),
                 inboxRepository,
