@@ -208,9 +208,11 @@ grows with partition count; instances join/leave freely.
 5. **Retry policy:** implement per-key head-of-line blocking in RELAY/REQUEUE.
 6. **Delete the lock for good:** the lock is already removed on the branch; this
    ADR records that it is not coming back.
-7. **Validate:** integration test with N instances, a rebalance mid-drain, and an
-   injected send failure — assert per-key order on `published.<region>` in all
-   three.
+7. **Validate:** partition scoping and per-key head-of-line gating (incl. a
+   failed-then-requeued earlier event) are covered against a real Oracle by
+   `OutboxOrderingIT` (Testcontainers, `mvn verify`). Still TODO: an end-to-end
+   test with N instances and a rebalance mid-drain asserting per-key order on
+   `published.<region>`.
 
 ## Resolved sizing
 
