@@ -183,14 +183,15 @@ grows with partition count; instances join/leave freely.
 2. **Retry without reordering (head-of-line per key).** On a Kafka send failure,
    a key's later events must not overtake the failed earlier one. Implemented: the
    RELAY drain only claims a `NEW` row when every earlier same-key row is already
-   `SENT` (`NOT EXISTS` gate on `(REGION, MESSAGE_KEY, ID)`). A failed earlier
-   event therefore blocks its own key until it is requeued and finally sent; other
-   keys are unaffected. Keyless (`null` message key) rows are never blocked.
+   `SENT` (`NOT EXISTS` gate, index `IX_OUTBOX_KEY_ORDER (REGION, MESSAGE_KEY, ID,
+   PROCESSING_STATUS)`). A failed earlier event therefore blocks its own key until
+   it is requeued and finally sent; other keys are unaffected. Keyless (`null`
+   message key) rows are never blocked. See the index/retention appendix.
 3. **Aggregation window.** Today the window is "one drain batch". Re-express it
    per owned partition; confirm the collapse rules (CREATED+BUSTED → drop) remain
    best-effort-per-window and downstream-correct.
 4. **Outbox schema.** Add `KAFKA_PARTITION` to `BOOKING_CONFIRMATION_OUTBOX` and
-   index the drain by `(PROCESSING_STATUS, KAFKA_PARTITION, ID)`.
+   index the drain by `(PROCESSING_STATUS, REGION, KAFKA_PARTITION, ID)`.
 
 ## Migration plan (from the current lock-removed state)
 
@@ -232,3 +233,46 @@ grows with partition count; instances join/leave freely.
 
 - Cooperative rebalancing assumed — confirm the Kafka client/broker versions
   support it.
+
+## Appendix: outbox index & retention analysis
+
+Static analysis of the outbox access paths — confirm against a real
+`EXPLAIN PLAN` with representative volume before relying on it.
+
+Indexes (besides the `ID` primary key):
+
+- `IX_OUTBOX_DRAIN (PROCESSING_STATUS, REGION, KAFKA_PARTITION, ID)` — serves the
+  drain filter and the `requeueFailed` update. `PROCESSING_STATUS` leads, so the
+  `NEW` slice stays small however many `SENT` rows accumulate.
+- `IX_OUTBOX_KEY_ORDER (REGION, MESSAGE_KEY, ID, PROCESSING_STATUS)` — serves the
+  head-of-line `NOT EXISTS`. `PROCESSING_STATUS` trails so the probe is
+  index-only (no table hop per candidate).
+
+| Query | Filter | Index | Verdict |
+|-------|--------|-------|---------|
+| INSERT | — | maintains PK + 2 indexes | write cost ×3 |
+| drain (main) | `status=NEW, region, partition IN` | `IX_OUTBOX_DRAIN` | good (INLIST); possible bounded `ORDER BY id` sort |
+| drain (head-of-line) | `region, key, id<, status≠SENT` | `IX_OUTBOX_KEY_ORDER` | index-only; scan length grows with un-purged history |
+| mark SENT / SEND_FAILURE | `id IN, region` | PK | good |
+| requeueFailed | `status=SEND_FAILURE, region, partition IN` | `IX_OUTBOX_DRAIN` | good |
+
+Findings:
+
+- **P1 (open, highest priority) — no retention of terminal rows.** `SENT` /
+  `RETRY_EXHAUSTED` rows are never purged, so the table and `IX_OUTBOX_KEY_ORDER`
+  grow unbounded. In the nominal (no-failure) case the head-of-line `NOT EXISTS`
+  scans every earlier same-key row (all `SENT`) before concluding — O(key history)
+  per candidate, which grows over time. Fix: retention/purge of terminal rows
+  (scheduled delete or interval partitioning). **Not yet implemented.**
+- **P2 (done) — covering `IX_OUTBOX_KEY_ORDER`.** Trailing `PROCESSING_STATUS`
+  keeps the gate probe index-only. Reduces per-candidate cost; does not bound
+  growth (that is P1).
+- **P3 (accepted) — `ORDER BY id` may sort.** With `KAFKA_PARTITION` ahead of `ID`
+  in `IX_OUTBOX_DRAIN`, a multi-partition `IN` yields `(partition, id)` order, so
+  `ORDER BY id` adds a bounded `SORT ORDER BY STOPKEY`. It vanishes when an
+  instance owns a single partition (e.g. 12 instances) and is capped by the batch
+  size. Left as-is (FIFO fairness; `ORDER BY partition, id` would avoid the sort
+  but risks partition starvation).
+- **P4 (accepted) — write amplification.** Insert maintains the PK + 2 secondary
+  indexes; status updates touch `IX_OUTBOX_DRAIN`. Minimum for the two access
+  patterns; monitor if the outbox becomes very hot.
