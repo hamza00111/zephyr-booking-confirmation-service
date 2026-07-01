@@ -16,9 +16,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * RELAY stage: drains NEW outbox rows and publishes them to {@code published.<region>}.
  *
- * <p>The transaction spans drain ({@code FOR UPDATE SKIP LOCKED}) -> publish -> mark. Each send is
- * awaited (bounded by the producer's delivery timeout); successes are marked SENT, failures
- * SEND_FAILURE for the requeue stage. Delivery is at-least-once.
+ * <p>The transaction spans drain ({@code FOR UPDATE SKIP LOCKED}, owned partitions only, gated
+ * head-of-line per key) -> publish -> mark. Each send is awaited (bounded by the producer's delivery
+ * timeout); successes are marked SENT, failures SEND_FAILURE for the requeue stage. Delivery is
+ * at-least-once, and per-key order is preserved end to end (ADR 0001).
  */
 public class DefaultBookingRelayService extends AbstractRegionScopedService implements BookingRelayService {
 

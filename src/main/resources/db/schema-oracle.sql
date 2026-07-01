@@ -45,3 +45,5 @@ CREATE TABLE BOOKING_CONFIRMATION_OUTBOX (
 );
 -- Partition included ahead of ID so a partition-scoped relay drain (ADR 0001) stays index-ordered.
 CREATE INDEX IX_OUTBOX_DRAIN ON BOOKING_CONFIRMATION_OUTBOX (PROCESSING_STATUS, REGION, KAFKA_PARTITION, ID);
+-- Head-of-line per key (ADR 0001): the RELAY drain skips a NEW row while an earlier same-key row is unsent.
+CREATE INDEX IX_OUTBOX_KEY_ORDER ON BOOKING_CONFIRMATION_OUTBOX (REGION, MESSAGE_KEY, ID);

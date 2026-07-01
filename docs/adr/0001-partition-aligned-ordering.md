@@ -181,10 +181,11 @@ grows with partition count; instances join/leave freely.
    touched by two instances during the handover. Use cooperative rebalancing and
    `onPartitionsRevoked` to quiesce in-flight drains for revoked partitions.
 2. **Retry without reordering (head-of-line per key).** On a Kafka send failure,
-   a key's later events must not overtake the failed earlier one. Block the
-   key/partition until the failed event succeeds (or is parked), instead of
-   requeueing it behind newer rows. This replaces today's REQUEUE-promotes-to-NEW
-   behaviour, which can reorder.
+   a key's later events must not overtake the failed earlier one. Implemented: the
+   RELAY drain only claims a `NEW` row when every earlier same-key row is already
+   `SENT` (`NOT EXISTS` gate on `(REGION, MESSAGE_KEY, ID)`). A failed earlier
+   event therefore blocks its own key until it is requeued and finally sent; other
+   keys are unaffected. Keyless (`null` message key) rows are never blocked.
 3. **Aggregation window.** Today the window is "one drain batch". Re-express it
    per owned partition; confirm the collapse rules (CREATED+BUSTED → drop) remain
    best-effort-per-window and downstream-correct.
@@ -211,11 +212,21 @@ grows with partition count; instances join/leave freely.
    injected send failure — assert per-key order on `published.<region>` in all
    three.
 
+## Resolved sizing
+
+- **Partitions per `internal.<region>` = 12** (36 across the three regions). With
+  `consumer.concurrency = 3` this gives up to **12-way parallel draining per
+  region** and a fully-utilised ceiling of **12 instances** (3 consumers each =
+  36 consumers = 36 partitions, one apiece); beyond 12 instances consumers sit
+  idle. 12 divides evenly by the common instance counts (1/2/3/4/6/12), so
+  assignment stays balanced. Going past 12-way per region would require adding
+  partitions — an ordering-aware migration (key→partition remap), not expected
+  soon.
+- **Per-key head-of-line blocking on send failure is accepted** (a permanently
+  failed earlier event stalls only its own key until resolved). Implemented in
+  the RELAY drain (see below); ops must alert on `RETRY_EXHAUSTED`.
+
 ## Open questions
 
-- How many partitions per `internal.<region>` today? That is the intra-region
-  parallelism ceiling and must be sized against peak trade volume.
-- Is per-key/partition head-of-line blocking on send failure acceptable to the
-  business (a stuck trade pauses only its own key/partition)?
 - Cooperative rebalancing assumed — confirm the Kafka client/broker versions
   support it.

@@ -18,8 +18,10 @@ import org.springframework.stereotype.Repository;
  * Oracle JDBC implementation of the outbox (mirrors the publisher's relay drain semantics).
  *
  * <p>{@link #findNew} claims rows with {@code FOR UPDATE SKIP LOCKED} (runs inside the RELAY
- * transaction). {@link #requeueFailed} promotes {@code SEND_FAILURE} rows back to {@code NEW} while
- * the retry budget remains, otherwise to {@code RETRY_EXHAUSTED}.
+ * transaction), restricted to owned partitions and gated head-of-line per key: a {@code NEW} row is
+ * only claimed once every earlier same-key row is {@code SENT}, so a failed event never lets its
+ * key's later events overtake it (ADR 0001). {@link #requeueFailed} promotes {@code SEND_FAILURE}
+ * rows back to {@code NEW} while the retry budget remains, otherwise to {@code RETRY_EXHAUSTED}.
  */
 @Repository
 public class JdbcOutboxRepository implements OutboxRepository {
@@ -37,12 +39,20 @@ public class JdbcOutboxRepository implements OutboxRepository {
             SELECT ID, REGION, IDEMPOTENCY_KEY, DESTINATION, MESSAGE_KEY, KAFKA_PARTITION, EVENT_PAYLOAD, INBOX_ID, TRACE_ID, HEADERS
             FROM BOOKING_CONFIRMATION_OUTBOX
             WHERE ID IN (
-                SELECT ID
-                FROM BOOKING_CONFIRMATION_OUTBOX
-                WHERE PROCESSING_STATUS = 'NEW'
-                  AND REGION = :region
-                  AND KAFKA_PARTITION IN (:partitions)
-                ORDER BY ID
+                SELECT o.ID
+                FROM BOOKING_CONFIRMATION_OUTBOX o
+                WHERE o.PROCESSING_STATUS = 'NEW'
+                  AND o.REGION = :region
+                  AND o.KAFKA_PARTITION IN (:partitions)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM BOOKING_CONFIRMATION_OUTBOX b
+                      WHERE b.REGION = o.REGION
+                        AND b.MESSAGE_KEY = o.MESSAGE_KEY
+                        AND b.ID < o.ID
+                        AND b.PROCESSING_STATUS <> 'SENT'
+                  )
+                ORDER BY o.ID
                 FETCH FIRST :limit ROWS ONLY
             )
             FOR UPDATE SKIP LOCKED

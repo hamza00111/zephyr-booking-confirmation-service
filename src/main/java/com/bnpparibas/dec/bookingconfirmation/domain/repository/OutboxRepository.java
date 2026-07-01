@@ -19,7 +19,9 @@ public interface OutboxRepository {
 
     /**
      * Claims up to {@code limit} {@code NEW} rows for the region, restricted to the given owned
-     * {@code partitions}. Returns empty if {@code partitions} is empty.
+     * {@code partitions} and gated head-of-line per key: a row is only returned once every earlier
+     * same-key row is {@code SENT}, so a failed event never lets its key's later events overtake it.
+     * Returns empty if {@code partitions} is empty.
      */
     List<OutboxEvent> findNew(Region region, Collection<Integer> partitions, int limit);
 
