@@ -32,6 +32,7 @@ CREATE TABLE BOOKING_CONFIRMATION_OUTBOX (
     IDEMPOTENCY_KEY   VARCHAR2(512) NOT NULL,
     DESTINATION       VARCHAR2(255) NOT NULL,          -- published.<region> topic
     MESSAGE_KEY       VARCHAR2(512),
+    KAFKA_PARTITION   NUMBER,                          -- carried from the inbox row; ordering/parallelism unit (ADR 0001)
     TRACE_ID          VARCHAR2(64),                    -- correlation id propagated from the inbox
     EVENT_PAYLOAD     CLOB          NOT NULL,          -- serialized event payload
     HEADERS           CLOB,
@@ -42,4 +43,5 @@ CREATE TABLE BOOKING_CONFIRMATION_OUTBOX (
     CREATED_ON        TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL,
     UPDATED_ON        TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL
 );
-CREATE INDEX IX_OUTBOX_DRAIN ON BOOKING_CONFIRMATION_OUTBOX (PROCESSING_STATUS, REGION, ID);
+-- Partition included ahead of ID so a partition-scoped relay drain (ADR 0001) stays index-ordered.
+CREATE INDEX IX_OUTBOX_DRAIN ON BOOKING_CONFIRMATION_OUTBOX (PROCESSING_STATUS, REGION, KAFKA_PARTITION, ID);

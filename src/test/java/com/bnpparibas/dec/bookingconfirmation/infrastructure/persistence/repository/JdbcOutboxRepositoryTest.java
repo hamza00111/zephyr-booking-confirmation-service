@@ -72,6 +72,6 @@ class JdbcOutboxRepositoryTest {
     }
 
     private static OutboxEvent event(long inboxId) {
-        return new OutboxEvent(null, Region.AMER, "idem-" + inboxId, "published", "K1", "{}", inboxId, "trace", null);
+        return new OutboxEvent(null, Region.AMER, "idem-" + inboxId, "published", "K1", 0, "{}", inboxId, "trace", null);
     }
 }

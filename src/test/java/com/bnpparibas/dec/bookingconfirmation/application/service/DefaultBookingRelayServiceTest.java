@@ -67,7 +67,7 @@ class DefaultBookingRelayServiceTest {
     }
 
     private static OutboxEvent outboxEvent(long id) {
-        return new OutboxEvent(id, Region.AMER, "idem-" + id, "published", "K1", "{}", id, "trace", null);
+        return new OutboxEvent(id, Region.AMER, "idem-" + id, "published", "K1", 0, "{}", id, "trace", null);
     }
 
     private static TransactionTemplate transactionTemplate() {

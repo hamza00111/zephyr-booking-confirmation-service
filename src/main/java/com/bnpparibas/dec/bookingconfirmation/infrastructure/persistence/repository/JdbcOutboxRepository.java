@@ -26,14 +26,14 @@ public class JdbcOutboxRepository implements OutboxRepository {
     private static final String INSERT_SQL =
             """
             INSERT INTO BOOKING_CONFIRMATION_OUTBOX
-                (REGION, IDEMPOTENCY_KEY, DESTINATION, MESSAGE_KEY, EVENT_PAYLOAD, INBOX_ID, TRACE_ID, HEADERS, PROCESSING_STATUS)
+                (REGION, IDEMPOTENCY_KEY, DESTINATION, MESSAGE_KEY, KAFKA_PARTITION, EVENT_PAYLOAD, INBOX_ID, TRACE_ID, HEADERS, PROCESSING_STATUS)
             VALUES
-                (:region, :idempotencyKey, :destination, :messageKey, :payload, :inboxId, :traceId, :headers, 'NEW')
+                (:region, :idempotencyKey, :destination, :messageKey, :kafkaPartition, :payload, :inboxId, :traceId, :headers, 'NEW')
             """;
 
     private static final String SELECT_NEW =
             """
-            SELECT ID, REGION, IDEMPOTENCY_KEY, DESTINATION, MESSAGE_KEY, EVENT_PAYLOAD, INBOX_ID, TRACE_ID, HEADERS
+            SELECT ID, REGION, IDEMPOTENCY_KEY, DESTINATION, MESSAGE_KEY, KAFKA_PARTITION, EVENT_PAYLOAD, INBOX_ID, TRACE_ID, HEADERS
             FROM BOOKING_CONFIRMATION_OUTBOX
             WHERE ID IN (
                 SELECT ID
@@ -79,6 +79,7 @@ public class JdbcOutboxRepository implements OutboxRepository {
             rs.getString("IDEMPOTENCY_KEY"),
             rs.getString("DESTINATION"),
             rs.getString("MESSAGE_KEY"),
+            rs.getObject("KAFKA_PARTITION", Integer.class),
             rs.getString("EVENT_PAYLOAD"),
             rs.getObject("INBOX_ID", Long.class),
             rs.getString("TRACE_ID"),
@@ -102,6 +103,7 @@ public class JdbcOutboxRepository implements OutboxRepository {
                         .addValue("idempotencyKey", event.idempotencyKey())
                         .addValue("destination", event.destination())
                         .addValue("messageKey", event.messageKey())
+                        .addValue("kafkaPartition", event.kafkaPartition())
                         .addValue("payload", event.payload())
                         .addValue("inboxId", event.inboxId())
                         .addValue("traceId", event.traceId())

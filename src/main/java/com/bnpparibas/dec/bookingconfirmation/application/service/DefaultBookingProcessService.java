@@ -109,6 +109,7 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
                                 message.idempotencyKey(),
                                 publishedTopic,
                                 message.messageKey(),
+                                message.partition(),
                                 enriched,
                                 message.id(),
                                 message.traceId(),
