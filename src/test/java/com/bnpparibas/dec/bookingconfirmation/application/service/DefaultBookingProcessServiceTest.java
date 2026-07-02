@@ -32,6 +32,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 class DefaultBookingProcessServiceTest {
 
     private static final String PAYLOAD = "{\"eventType\":\"CREATED\",\"traceId\":\"trace-1\"}";
+    private static final String BUSTED_PAYLOAD = "{\"eventType\":\"BUSTED\",\"traceId\":\"trace-1\"}";
 
     @Mock
     private InboxRepository inboxRepository;
@@ -81,6 +82,61 @@ class DefaultBookingProcessServiceTest {
     }
 
     @Test
+    void tick_shouldMarkProcessFailure_whenTransformThrows() {
+        var owned = new OwnedPartitions();
+        owned.add(Region.AMER, 0);
+        var service = new DefaultBookingProcessService(
+                Region.AMER, owned, 200, "published",
+                inboxRepository, outboxRepository, tradeEventCodec, new TradeEventAggregator(),
+                (region, payload) -> {
+                    throw new RuntimeException("boom");
+                },
+                (region, payload) -> true,
+                transactionTemplate());
+        given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(inbox(1L, "K1")));
+        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
+
+        service.tick();
+
+        verify(inboxRepository).markProcessFailure(Region.AMER, List.of(1L), "Transform failed in PROCESS stage");
+        verify(outboxRepository).insertAll(argThat(List::isEmpty));
+    }
+
+    @Test
+    void tick_shouldProcessButNotPublish_whenFilterDropsTheEvent() {
+        var owned = new OwnedPartitions();
+        owned.add(Region.AMER, 0);
+        var service = new DefaultBookingProcessService(
+                Region.AMER, owned, 200, "published",
+                inboxRepository, outboxRepository, tradeEventCodec, new TradeEventAggregator(),
+                (region, payload) -> payload,
+                (region, payload) -> false,
+                transactionTemplate());
+        given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(inbox(1L, "K1")));
+        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
+
+        service.tick();
+
+        verify(outboxRepository).insertAll(argThat(List::isEmpty));
+        verify(inboxRepository).markProcessed(Region.AMER, List.of(1L));
+    }
+
+    @Test
+    void tick_shouldMarkAggregated_whenCreateAndBustCollapse() {
+        var service = processService();
+        given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200)))
+                .willReturn(List.of(inbox(1L, "K", PAYLOAD), inbox(2L, "K", BUSTED_PAYLOAD)));
+        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
+        given(tradeEventCodec.eventType(BUSTED_PAYLOAD)).willReturn(Optional.of(TradeEventType.BUSTED));
+
+        service.tick();
+
+        verify(inboxRepository)
+                .markAggregated(eq(Region.AMER), argThat(ids -> ids.size() == 2 && ids.containsAll(List.of(1L, 2L))));
+        verify(outboxRepository).insertAll(argThat(List::isEmpty));
+    }
+
+    @Test
     void tick_shouldSkip_whenNoOwnedPartitions() {
         var service = new DefaultBookingProcessService(
                 Region.AMER, new OwnedPartitions(), 200, "published",
@@ -103,7 +159,11 @@ class DefaultBookingProcessServiceTest {
     }
 
     private static InboxMessage inbox(long id, String messageKey) {
-        return new InboxMessage(id, Region.AMER, "idem-" + id, "topic", 0, id, messageKey, PAYLOAD, "trace-1", null);
+        return inbox(id, messageKey, PAYLOAD);
+    }
+
+    private static InboxMessage inbox(long id, String messageKey, String payload) {
+        return new InboxMessage(id, Region.AMER, "idem-" + id, "topic", 0, id, messageKey, payload, "trace-1", null);
     }
 
     private static TransactionTemplate transactionTemplate() {
