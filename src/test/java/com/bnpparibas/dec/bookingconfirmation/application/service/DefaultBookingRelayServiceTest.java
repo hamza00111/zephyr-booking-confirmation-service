@@ -43,8 +43,8 @@ class DefaultBookingRelayServiceTest {
         var ok = outboxEvent(1L);
         var bad = outboxEvent(2L);
         given(outboxRepository.findNew(eq(Region.AMER), any(), eq(100))).willReturn(List.of(ok, bad));
-        Map<Long, CompletableFuture<?>> futures = new LinkedHashMap<>();
-        futures.put(1L, CompletableFuture.completedFuture("ok"));
+        Map<Long, CompletableFuture<Void>> futures = new LinkedHashMap<>();
+        futures.put(1L, CompletableFuture.completedFuture(null));
         futures.put(2L, CompletableFuture.failedFuture(new RuntimeException("boom")));
         given(publisher.sendAll(Region.AMER, List.of(ok, bad))).willReturn(futures);
 

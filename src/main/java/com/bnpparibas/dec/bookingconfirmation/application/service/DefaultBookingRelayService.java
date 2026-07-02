@@ -50,7 +50,7 @@ public class DefaultBookingRelayService extends AbstractRegionScopedService impl
                 return;
             }
 
-            final Map<Long, CompletableFuture<?>> futures = publisher.sendAll(region(), batch);
+            final Map<Long, CompletableFuture<Void>> futures = publisher.sendAll(region(), batch);
             final List<Long> sent = new ArrayList<>();
             final List<Long> failed = new ArrayList<>();
             futures.forEach((id, future) -> {
