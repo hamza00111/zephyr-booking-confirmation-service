@@ -7,7 +7,7 @@ import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.TradeEvent;
 import com.fasterxml.jackson.core.JacksonException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.EnumMap;
 import java.util.Locale;
@@ -61,18 +61,18 @@ public class JacksonTradeEventCodec implements TradeEventCodec {
             TradeEventType.AMENDED, "TRADE_AMENDED",
             TradeEventType.BUSTED, "TRADE_DELETED"));
 
-    private final ObjectMapper objectMapper;
+    private final JsonMapper jsonMapper;
 
     public JacksonTradeEventCodec(
-            @Qualifier(TradeEventJacksonConfig.TRADE_EVENT_OBJECT_MAPPER) final ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
+            @Qualifier(TradeEventJacksonConfig.TRADE_EVENT_JSON_MAPPER) final JsonMapper jsonMapper) {
+        this.jsonMapper = jsonMapper;
     }
 
     @Override
     public Optional<TradeEventType> eventType(final String payload) {
         final JsonNode root;
         try {
-            root = objectMapper.readTree(payload);
+            root = jsonMapper.readTree(payload);
         } catch (final JacksonException unparseable) {
             return Optional.empty();
         }
@@ -82,14 +82,14 @@ public class JacksonTradeEventCodec implements TradeEventCodec {
     @Override
     public String rewriteType(final String payload, final TradeEventType target) {
         try {
-            final JsonNode root = objectMapper.readTree(payload);
+            final JsonNode root = jsonMapper.readTree(payload);
             if (!(root instanceof ObjectNode event)) {
                 throw new IllegalStateException("TradeEvent payload is not a JSON object");
             }
             event.put(EVENT_TYPE_FIELD, WIRE_NAMES.get(target));
             // Kept for any legacy reader still keyed on @type; the typed round-trip drops it.
             event.put(TYPE_FIELD, TYPE_PREFIX + target.name());
-            return objectMapper.writeValueAsString(event);
+            return jsonMapper.writeValueAsString(event);
         } catch (final JsonProcessingException unparseable) {
             // eventType() parsed this payload moments ago; reaching here is a programming error.
             throw new IllegalStateException("Cannot rewrite TradeEvent type", unparseable);
@@ -99,7 +99,7 @@ public class JacksonTradeEventCodec implements TradeEventCodec {
     @Override
     public Optional<String> traceId(final String payload) {
         try {
-            return Optional.ofNullable(text(objectMapper.readTree(payload), TRACE_ID_FIELD));
+            return Optional.ofNullable(text(jsonMapper.readTree(payload), TRACE_ID_FIELD));
         } catch (final JacksonException unparseable) {
             return Optional.empty();
         }
@@ -109,7 +109,7 @@ public class JacksonTradeEventCodec implements TradeEventCodec {
     public TradeEvent deserialize(final String payload) {
         final JsonNode root;
         try {
-            root = objectMapper.readTree(payload);
+            root = jsonMapper.readTree(payload);
         } catch (final JacksonException unparseable) {
             throw new TradeEventBindingException("TradeEvent payload is not valid JSON", unparseable);
         }
@@ -121,7 +121,7 @@ public class JacksonTradeEventCodec implements TradeEventCodec {
         // Normalize the discriminator so legacy-vocabulary payloads bind to the right subtype.
         event.put(EVENT_TYPE_FIELD, WIRE_NAMES.get(type));
         try {
-            return objectMapper.treeToValue(event, TradeEvent.class);
+            return jsonMapper.treeToValue(event, TradeEvent.class);
         } catch (final JacksonException bindingFailure) {
             throw new TradeEventBindingException("TradeEvent payload failed typed binding", bindingFailure);
         }
@@ -130,7 +130,7 @@ public class JacksonTradeEventCodec implements TradeEventCodec {
     @Override
     public String serialize(final TradeEvent event) {
         try {
-            return objectMapper.writeValueAsString(event);
+            return jsonMapper.writeValueAsString(event);
         } catch (final JsonProcessingException failure) {
             throw new TradeEventBindingException("TradeEvent could not be serialized", failure);
         }

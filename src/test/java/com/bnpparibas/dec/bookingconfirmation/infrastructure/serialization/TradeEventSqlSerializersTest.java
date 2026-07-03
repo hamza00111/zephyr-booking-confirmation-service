@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import java.io.StringReader;
 import java.sql.Clob;
 import java.sql.Date;
@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
  */
 class TradeEventSqlSerializersTest {
 
-    private final ObjectMapper mapper = TradeEventJacksonConfig.buildTradeEventMapper();
+    private final JsonMapper mapper = TradeEventJacksonConfig.buildTradeEventMapper();
 
     @Test
     void clob_shouldSerializeAsItsCharacterContent() throws Exception {
