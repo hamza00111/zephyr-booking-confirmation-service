@@ -4,6 +4,7 @@ import static com.bnpparibas.dec.bookingconfirmation.infrastructure.config.datas
 
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
+import com.bnpparibas.dec.bookingconfirmation.domain.model.RequeueOutcome;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import java.util.Collection;
 import java.util.List;
@@ -75,15 +76,40 @@ public class JdbcOutboxRepository implements OutboxRepository {
             WHERE ID IN (:ids) AND REGION = :region
             """;
 
-    private static final String REQUEUE_FAILED =
+    // Same terminal-status transition as MARK_SEND_FAILURE but without RETRY_COUNT increment:
+    // a rejected send was never attempted, so it must not consume the poison-message budget.
+    private static final String MARK_SEND_REJECTED =
             """
             UPDATE BOOKING_CONFIRMATION_OUTBOX
-            SET PROCESSING_STATUS = CASE WHEN RETRY_COUNT < :maxRetries THEN 'NEW' ELSE 'RETRY_EXHAUSTED' END,
-                ERROR_MESSAGE     = CASE WHEN RETRY_COUNT < :maxRetries THEN NULL ELSE ERROR_MESSAGE END,
+            SET PROCESSING_STATUS = 'SEND_FAILURE',
+                ERROR_MESSAGE     = :errorMessage,
+                UPDATED_ON        = SYSTIMESTAMP
+            WHERE ID IN (:ids) AND REGION = :region
+            """;
+
+    // Promote and exhaust as separate statements so each reports its own row count — exhaustion
+    // (budget spent, row parked terminally) is the alerting signal and must not hide in a sum.
+    private static final String REQUEUE_PROMOTE =
+            """
+            UPDATE BOOKING_CONFIRMATION_OUTBOX
+            SET PROCESSING_STATUS = 'NEW',
+                ERROR_MESSAGE     = NULL,
                 UPDATED_ON        = SYSTIMESTAMP
             WHERE PROCESSING_STATUS = 'SEND_FAILURE'
               AND REGION = :region
               AND KAFKA_PARTITION IN (:partitions)
+              AND RETRY_COUNT < :maxRetries
+            """;
+
+    private static final String REQUEUE_EXHAUST =
+            """
+            UPDATE BOOKING_CONFIRMATION_OUTBOX
+            SET PROCESSING_STATUS = 'RETRY_EXHAUSTED',
+                UPDATED_ON        = SYSTIMESTAMP
+            WHERE PROCESSING_STATUS = 'SEND_FAILURE'
+              AND REGION = :region
+              AND KAFKA_PARTITION IN (:partitions)
+              AND RETRY_COUNT >= :maxRetries
             """;
 
     private static final RowMapper<OutboxEvent> ROW_MAPPER = (rs, rowNum) -> new OutboxEvent(
@@ -161,15 +187,29 @@ public class JdbcOutboxRepository implements OutboxRepository {
     }
 
     @Override
-    public int requeueFailed(final Region region, final Collection<Integer> partitions, final int maxRetries) {
-        if (partitions.isEmpty()) {
-            return 0;
+    public void markSendRejected(final Region region, final List<Long> ids, final String errorMessage) {
+        if (ids.isEmpty()) {
+            return;
         }
-        return jdbcTemplate.update(
-                REQUEUE_FAILED,
+        jdbcTemplate.update(
+                MARK_SEND_REJECTED,
                 new MapSqlParameterSource()
+                        .addValue("ids", ids)
                         .addValue("region", region.name())
-                        .addValue("partitions", partitions)
-                        .addValue("maxRetries", maxRetries));
+                        .addValue("errorMessage", JdbcInboxRepository.truncate(errorMessage)));
+    }
+
+    @Override
+    public RequeueOutcome requeueFailed(final Region region, final Collection<Integer> partitions, final int maxRetries) {
+        if (partitions.isEmpty()) {
+            return RequeueOutcome.NONE;
+        }
+        final MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("region", region.name())
+                .addValue("partitions", partitions)
+                .addValue("maxRetries", maxRetries);
+        final int promoted = jdbcTemplate.update(REQUEUE_PROMOTE, params);
+        final int exhausted = jdbcTemplate.update(REQUEUE_EXHAUST, params);
+        return new RequeueOutcome(promoted, exhausted);
     }
 }

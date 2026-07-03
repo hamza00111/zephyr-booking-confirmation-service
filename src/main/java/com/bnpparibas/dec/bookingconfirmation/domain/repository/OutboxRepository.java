@@ -2,6 +2,7 @@ package com.bnpparibas.dec.bookingconfirmation.domain.repository;
 
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
+import com.bnpparibas.dec.bookingconfirmation.domain.model.RequeueOutcome;
 import java.util.Collection;
 import java.util.List;
 
@@ -30,10 +31,17 @@ public interface OutboxRepository {
     void markSendFailure(Region region, List<Long> ids, String errorMessage);
 
     /**
+     * Marks rows whose send was never attempted (e.g. circuit breaker open) as {@code SEND_FAILURE}
+     * <em>without</em> consuming retry budget: an infrastructure outage of any length must not drive
+     * healthy rows to {@code RETRY_EXHAUSTED}. The requeue stage promotes them like any other
+     * failure.
+     */
+    void markSendRejected(Region region, List<Long> ids, String errorMessage);
+
+    /**
      * Promotes {@code SEND_FAILURE} rows for the owned {@code partitions} back to {@code NEW} while
      * their retry count is below {@code maxRetries}, otherwise marks them {@code RETRY_EXHAUSTED}.
-     *
-     * @return number of rows transitioned (0 if {@code partitions} is empty).
+     * No-op when {@code partitions} is empty.
      */
-    int requeueFailed(Region region, Collection<Integer> partitions, int maxRetries);
+    RequeueOutcome requeueFailed(Region region, Collection<Integer> partitions, int maxRetries);
 }

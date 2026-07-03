@@ -34,8 +34,8 @@ class BookingConfirmationSchedulerInitializerTest {
                 null,
                 null,
                 new ProcessProperties(3000, 200),
-                new RelayProperties(3000, 100),
-                new RequeueProperties(60000, 5),
+                new RelayProperties(3000, 100, 20000),
+                new RequeueProperties(60000, 5, 3),
                 null);
         var processRegistry = mock(BookingProcessServiceRegistry.class);
         var relayRegistry = mock(BookingRelayServiceRegistry.class);

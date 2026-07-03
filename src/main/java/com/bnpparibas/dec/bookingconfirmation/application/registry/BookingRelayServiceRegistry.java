@@ -2,6 +2,7 @@ package com.bnpparibas.dec.bookingconfirmation.application.registry;
 
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties.RegionProperties;
+import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
 import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.application.service.DefaultBookingRelayService;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.DomainEventPublisher;
@@ -24,6 +25,7 @@ public class BookingRelayServiceRegistry extends BaseRegionServiceRegistry<Booki
     private final BookingConfirmationCircuitBreakerRegistry breakerRegistry;
     private final TransactionTemplate transactionTemplate;
     private final OwnedPartitions ownedPartitions;
+    private final BookingConfirmationMetrics metrics;
 
     public BookingRelayServiceRegistry(
             final BookingConfirmationProperties properties,
@@ -31,13 +33,15 @@ public class BookingRelayServiceRegistry extends BaseRegionServiceRegistry<Booki
             final DomainEventPublisher publisher,
             final BookingConfirmationCircuitBreakerRegistry breakerRegistry,
             final TransactionTemplate transactionTemplate,
-            final OwnedPartitions ownedPartitions) {
+            final OwnedPartitions ownedPartitions,
+            final BookingConfirmationMetrics metrics) {
         super(properties);
         this.outboxRepository = outboxRepository;
         this.publisher = publisher;
         this.breakerRegistry = breakerRegistry;
         this.transactionTemplate = transactionTemplate;
         this.ownedPartitions = ownedPartitions;
+        this.metrics = metrics;
     }
 
     @Override
@@ -47,8 +51,10 @@ public class BookingRelayServiceRegistry extends BaseRegionServiceRegistry<Booki
                 region,
                 ownedPartitions,
                 properties().relay().batchSize(),
+                properties().relay().sendAwaitTimeoutMs(),
                 outboxRepository,
                 publisher,
-                transactionTemplate);
+                transactionTemplate,
+                metrics);
     }
 }

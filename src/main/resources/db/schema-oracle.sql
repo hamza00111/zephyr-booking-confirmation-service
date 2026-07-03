@@ -17,7 +17,7 @@ CREATE TABLE BOOKING_CONFIRMATION_INBOX (
     TRACE_ID          VARCHAR2(64),                    -- correlation id from the event body ($.traceId)
     HEADERS           CLOB,                            -- inbound headers as JSON (optional)
     RAW_PAYLOAD       CLOB          NOT NULL,          -- pivot JSON as received
-    PROCESSING_STATUS VARCHAR2(32)  NOT NULL,          -- NEW | PROCESSED | AGGREGATED | PROCESS_FAILURE | INVALID
+    PROCESSING_STATUS VARCHAR2(32)  NOT NULL,          -- NEW | PROCESSED | AGGREGATED | PROCESS_FAILURE | INGEST_FAILURE | INVALID
     RETRY_COUNT       NUMBER        DEFAULT 0 NOT NULL,
     ERROR_MESSAGE     CLOB,
     RECEIVED_ON       TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL,

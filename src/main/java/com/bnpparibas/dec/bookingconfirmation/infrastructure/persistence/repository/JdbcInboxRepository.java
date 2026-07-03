@@ -4,6 +4,7 @@ import static com.bnpparibas.dec.bookingconfirmation.infrastructure.config.datas
 
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
+import com.bnpparibas.dec.bookingconfirmation.domain.model.RequeueOutcome;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import java.util.Collection;
 import java.util.List;
@@ -32,6 +33,41 @@ public class JdbcInboxRepository implements InboxRepository {
             VALUES
                 (:region, :idempotencyKey, :sourceTopic, :partition, :offset, :messageKey,
                  :rawPayload, :traceId, :headers, 'NEW')
+            """;
+
+    private static final String INSERT_PARKED_SQL =
+            """
+            INSERT INTO BOOKING_CONFIRMATION_INBOX
+                (REGION, IDEMPOTENCY_KEY, SOURCE_TOPIC, KAFKA_PARTITION, KAFKA_OFFSET, MESSAGE_KEY,
+                 RAW_PAYLOAD, TRACE_ID, HEADERS, PROCESSING_STATUS, ERROR_MESSAGE)
+            VALUES
+                (:region, :idempotencyKey, :sourceTopic, :partition, :offset, :messageKey,
+                 :rawPayload, :traceId, :headers, 'INGEST_FAILURE', :errorMessage)
+            """;
+
+    // Promote and exhaust as separate statements so each reports its own row count — exhaustion
+    // (budget spent, row parked terminally) is the alerting signal and must not hide in a sum.
+    private static final String REQUEUE_PROMOTE =
+            """
+            UPDATE BOOKING_CONFIRMATION_INBOX
+            SET PROCESSING_STATUS = 'NEW',
+                ERROR_MESSAGE     = NULL,
+                UPDATED_ON        = SYSTIMESTAMP
+            WHERE PROCESSING_STATUS IN ('PROCESS_FAILURE', 'INGEST_FAILURE')
+              AND REGION = :region
+              AND KAFKA_PARTITION IN (:partitions)
+              AND RETRY_COUNT < :maxRetries
+            """;
+
+    private static final String REQUEUE_EXHAUST =
+            """
+            UPDATE BOOKING_CONFIRMATION_INBOX
+            SET PROCESSING_STATUS = 'INVALID',
+                UPDATED_ON        = SYSTIMESTAMP
+            WHERE PROCESSING_STATUS IN ('PROCESS_FAILURE', 'INGEST_FAILURE')
+              AND REGION = :region
+              AND KAFKA_PARTITION IN (:partitions)
+              AND RETRY_COUNT >= :maxRetries
             """;
 
     private static final String SELECT_NEW =
@@ -179,6 +215,41 @@ public class JdbcInboxRepository implements InboxRepository {
                         .addValue("ids", ids)
                         .addValue("region", region.name())
                         .addValue("errorMessage", truncate(errorMessage)));
+    }
+
+    @Override
+    public boolean insertParked(final InboxMessage message, final String errorMessage) {
+        final MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("region", message.region().name())
+                .addValue("idempotencyKey", message.idempotencyKey())
+                .addValue("sourceTopic", message.sourceTopic())
+                .addValue("partition", message.partition())
+                .addValue("offset", message.offset())
+                .addValue("messageKey", message.messageKey())
+                .addValue("rawPayload", message.rawPayload())
+                .addValue("traceId", message.traceId())
+                .addValue("headers", message.headers())
+                .addValue("errorMessage", truncate(errorMessage));
+        try {
+            return jdbcTemplate.update(INSERT_PARKED_SQL, params) > 0;
+        } catch (final DuplicateKeyException duplicate) {
+            // Already in the inbox (parked earlier or ingested normally) — idempotent no-op.
+            return false;
+        }
+    }
+
+    @Override
+    public RequeueOutcome requeueFailed(final Region region, final Collection<Integer> partitions, final int maxRetries) {
+        if (partitions.isEmpty()) {
+            return RequeueOutcome.NONE;
+        }
+        final MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("region", region.name())
+                .addValue("partitions", partitions)
+                .addValue("maxRetries", maxRetries);
+        final int promoted = jdbcTemplate.update(REQUEUE_PROMOTE, params);
+        final int exhausted = jdbcTemplate.update(REQUEUE_EXHAUST, params);
+        return new RequeueOutcome(promoted, exhausted);
     }
 
     static String truncate(final String message) {

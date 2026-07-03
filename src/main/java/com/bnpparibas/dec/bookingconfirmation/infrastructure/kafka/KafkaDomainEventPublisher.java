@@ -48,8 +48,11 @@ public class KafkaDomainEventPublisher implements DomainEventPublisher {
     }
 
     /**
-     * Publishes all events for a region. When the breaker is open the whole batch is short-circuited
-     * with pre-failed futures so the relay marks them {@code SEND_FAILURE} for the requeue stage.
+     * Publishes all events for a region. Each event acquires its own breaker permit; events the
+     * breaker rejects (OPEN, or HALF_OPEN probe quota reached) get pre-failed futures carrying
+     * {@link CallNotPermittedException} so the relay can distinguish "not attempted" from a real
+     * send failure. Each acquired permit records exactly one outcome, keeping HALF_OPEN
+     * permitted-call accounting correct.
      *
      * @return map of outbox row id to send future; never null, may be empty.
      */
@@ -61,15 +64,20 @@ public class KafkaDomainEventPublisher implements DomainEventPublisher {
         }
 
         final CircuitBreaker circuitBreaker = breakerRegistry.relayBreaker(region);
-        if (!circuitBreaker.tryAcquirePermission()) {
-            log.info("[{}] Relay circuit breaker open — short-circuiting {} sends", region, events.size());
-            final CallNotPermittedException notPermitted =
-                    CallNotPermittedException.createCallNotPermittedException(circuitBreaker);
-            events.forEach(event -> futures.put(event.id(), CompletableFuture.failedFuture(notPermitted)));
-            return futures;
-        }
-
-        events.forEach(event -> {
+        // One shared instance per batch: with the breaker open, allocating a stack-trace-filled
+        // exception per event would waste CPU on every relay tick for the whole outage.
+        CallNotPermittedException notPermitted = null;
+        for (final OutboxEvent event : events) {
+            if (!circuitBreaker.tryAcquirePermission()) {
+                if (notPermitted == null) {
+                    log.info(
+                            "[{}] Relay circuit breaker not permitting calls — rejecting the batch's remaining sends",
+                            region);
+                    notPermitted = CallNotPermittedException.createCallNotPermittedException(circuitBreaker);
+                }
+                futures.put(event.id(), CompletableFuture.failedFuture(notPermitted));
+                continue;
+            }
             try (var ignored = TraceMdc.scope(event.traceId())) {
                 final long startNanos = System.nanoTime();
                 try {
@@ -84,7 +92,7 @@ public class KafkaDomainEventPublisher implements DomainEventPublisher {
                         }
                     });
                     // The result value is irrelevant to the relay — expose completion/failure only.
-                    futures.put(event.id(), sendFuture.thenAccept(ignored -> {}));
+                    futures.put(event.id(), sendFuture.thenAccept(result -> {}));
                 } catch (final RuntimeException synchronousFailure) {
                     final long elapsedNanos = System.nanoTime() - startNanos;
                     circuitBreaker.onError(elapsedNanos, TimeUnit.NANOSECONDS, synchronousFailure);
@@ -92,7 +100,7 @@ public class KafkaDomainEventPublisher implements DomainEventPublisher {
                     futures.put(event.id(), CompletableFuture.failedFuture(synchronousFailure));
                 }
             }
-        });
+        }
         return futures;
     }
 

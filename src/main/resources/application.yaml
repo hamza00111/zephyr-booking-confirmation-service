@@ -43,6 +43,22 @@ server:
   servlet:
     context-path: ${CONTEXT_PATH:/booking-confirmation}
 
+# Health probes + Prometheus scrape endpoint. Readiness includes the datasource: an instance that
+# cannot reach Oracle cannot ingest or relay and should be taken out of rotation.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: ${HEALTH_SHOW_DETAILS:never}
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+
 app:
   booking-confirmation:
 
@@ -50,6 +66,7 @@ app:
     consumer:
       concurrency: ${BC_CONSUMER_CONCURRENCY:3}
       max-poll-records: ${BC_CONSUMER_MAX_POLL_RECORDS:500}
+      max-poll-interval-ms: ${BC_CONSUMER_MAX_POLL_INTERVAL_MS:300000}
       retry-backoff-ms: ${BC_CONSUMER_RETRY_BACKOFF_MS:2000}
       retry-max-attempts: ${BC_CONSUMER_RETRY_MAX_ATTEMPTS:3}
 
@@ -65,14 +82,18 @@ app:
       batch-size: ${BC_PROCESS_BATCH_SIZE:200}
 
     # RELAY stage: drain outbox -> publish to published.<region>.
+    # send-await-timeout-ms must exceed the producer delivery.timeout.ms (15000).
     relay:
       tick-interval-ms: ${BC_RELAY_TICK_MS:3000}
       batch-size: ${BC_RELAY_BATCH_SIZE:100}
+      send-await-timeout-ms: ${BC_RELAY_SEND_AWAIT_TIMEOUT_MS:20000}
 
-    # REQUEUE stage: promote SEND_FAILURE back to NEW within retry budget.
+    # REQUEUE stage: promote failed rows back to NEW within retry budget
+    # (max-retries: outbox SEND_FAILURE; process-max-retries: inbox PROCESS/INGEST_FAILURE).
     requeue:
       tick-interval-ms: ${BC_REQUEUE_TICK_MS:60000}
       max-retries: ${BC_REQUEUE_MAX_RETRIES:5}
+      process-max-retries: ${BC_REQUEUE_PROCESS_MAX_RETRIES:3}
 
     # Per-region isolation: own circuit breaker, scheduled tasks, topics.
     regions:
@@ -115,8 +136,10 @@ logging:
     org.apache.kafka.clients: ERROR
     root: ${LOGGING_ROOT_LEVEL:INFO}
 
+# Off by default: an API explorer has no business being reachable in production.
+# The local profile re-enables it; other environments opt in via SWAGGER_ENABLED.
 springdoc:
   swagger-ui:
-    enabled: ${SWAGGER_ENABLED:true}
+    enabled: ${SWAGGER_ENABLED:false}
   api-docs:
     path: /v3/api-docs

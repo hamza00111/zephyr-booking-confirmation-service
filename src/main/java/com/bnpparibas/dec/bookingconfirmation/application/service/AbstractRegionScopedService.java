@@ -1,5 +1,6 @@
 package com.bnpparibas.dec.bookingconfirmation.application.service;
 
+import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
 import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingConfirmationService;
@@ -25,10 +26,13 @@ public abstract class AbstractRegionScopedService implements BookingConfirmation
 
     private final Region region;
     private final OwnedPartitions ownedPartitions;
+    protected final BookingConfirmationMetrics metrics;
 
-    protected AbstractRegionScopedService(final Region region, final OwnedPartitions ownedPartitions) {
+    protected AbstractRegionScopedService(
+            final Region region, final OwnedPartitions ownedPartitions, final BookingConfirmationMetrics metrics) {
         this.region = region;
         this.ownedPartitions = ownedPartitions;
+        this.metrics = metrics;
     }
 
     @Override
@@ -50,6 +54,7 @@ public abstract class AbstractRegionScopedService implements BookingConfirmation
         try {
             doTick(owned);
         } catch (final RuntimeException exception) {
+            metrics.tickError(region, processType().name());
             log.error("[{}] Tick failed", processIdentifier(), exception);
         }
     }

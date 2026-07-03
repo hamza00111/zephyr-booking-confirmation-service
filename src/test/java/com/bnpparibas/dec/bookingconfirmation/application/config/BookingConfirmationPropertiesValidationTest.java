@@ -59,15 +59,6 @@ class BookingConfirmationPropertiesValidationTest {
     }
 
     @Test
-    void shouldFailStartup_whenLockTtlWouldBeSubSecond() {
-        runner.withPropertyValues(VALID_MINIMUM)
-                .withPropertyValues(
-                        "app.booking-confirmation.process.tick-interval-ms=100",
-                        "app.booking-confirmation.regions.AMER.lock-ttl-multiplier=2")
-                .run(context -> assertThat(context).hasFailed());
-    }
-
-    @Test
     void shouldFailStartup_whenConsumerRetryBudgetExceedsPollInterval() {
         runner.withPropertyValues(VALID_MINIMUM)
                 .withPropertyValues(

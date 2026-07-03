@@ -6,8 +6,10 @@ import static org.mockito.Mockito.mock;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties.RegionProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties.RequeueProperties;
+import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
 import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
+import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -22,10 +24,14 @@ class BookingRequeueServiceRegistryTest {
                 null,
                 null,
                 null,
-                new RequeueProperties(60000, 5),
+                new RequeueProperties(60000, 5, 3),
                 null);
         var registry = new BookingRequeueServiceRegistry(
-                properties, mock(OutboxRepository.class), new OwnedPartitions());
+                properties,
+                mock(OutboxRepository.class),
+                mock(InboxRepository.class),
+                new OwnedPartitions(),
+                BookingConfirmationMetrics.noop());
 
         registry.initialize();
 

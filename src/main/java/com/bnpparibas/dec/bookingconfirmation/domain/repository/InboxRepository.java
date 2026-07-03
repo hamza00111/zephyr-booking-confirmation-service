@@ -2,6 +2,7 @@ package com.bnpparibas.dec.bookingconfirmation.domain.repository;
 
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
+import com.bnpparibas.dec.bookingconfirmation.domain.model.RequeueOutcome;
 import java.util.Collection;
 import java.util.List;
 
@@ -36,4 +37,20 @@ public interface InboxRepository {
     void markProcessFailure(Region region, List<Long> ids, String errorMessage);
 
     void markInvalid(Region region, List<Long> ids, String errorMessage);
+
+    /**
+     * Parks a message whose ingestion failed (status {@code INGEST_FAILURE}), preserving the raw
+     * payload so the consumer can safely advance past the record. Dedupes like {@link
+     * #insertIfAbsent}.
+     *
+     * @return {@code true} if a new row was written; {@code false} if it already existed.
+     */
+    boolean insertParked(InboxMessage message, String errorMessage);
+
+    /**
+     * Promotes {@code PROCESS_FAILURE} and {@code INGEST_FAILURE} rows for the owned
+     * {@code partitions} back to {@code NEW} while their retry count is below {@code maxRetries},
+     * otherwise marks them {@code INVALID} (terminal). No-op when {@code partitions} is empty.
+     */
+    RequeueOutcome requeueFailed(Region region, Collection<Integer> partitions, int maxRetries);
 }
