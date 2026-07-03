@@ -49,7 +49,11 @@ public abstract class AbstractRegionScopedService implements BookingConfirmation
     public final void tick() {
         final Set<Integer> owned = ownedPartitions.forRegion(region);
         if (owned.isEmpty()) {
-            return; // this instance currently owns no partitions of this region — nothing to drain
+            // Nothing to drain — but if failures are piling up while this line repeats (or the
+            // bc.partitions.owned gauge sits at 0), the consumer has lost its partitions and rows
+            // are stuck until it rejoins the group.
+            log.debug("[{}] Owns no partitions — skipping tick", processIdentifier());
+            return;
         }
         try {
             doTick(owned);

@@ -9,7 +9,7 @@ import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-class BookingConfirmationBookingConfirmationTradeEventAggregatorTest {
+class BookingConfirmationTradeEventAggregatorTest {
 
     private final BookingConfirmationTradeEventAggregator aggregator = new BookingConfirmationTradeEventAggregator();
 

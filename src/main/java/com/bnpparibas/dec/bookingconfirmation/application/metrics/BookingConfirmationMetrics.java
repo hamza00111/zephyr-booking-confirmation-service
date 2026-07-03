@@ -1,8 +1,10 @@
 package com.bnpparibas.dec.bookingconfirmation.application.metrics;
 
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.function.Supplier;
 
 /**
  * Central counter names for the pipeline, tagged {@code region} (and {@code stage} where relevant).
@@ -67,6 +69,18 @@ public final class BookingConfirmationMetrics {
     /** A scheduled tick threw — persistent increments mean a stage is failing every run. */
     public void tickError(final Region region, final String stage) {
         countWithStage("bc.tick.errors", region, stage, 1);
+    }
+
+    /**
+     * How many partitions of the region this instance currently owns. Zero while failure rows
+     * accumulate is the stuck-pipeline signature: every drain (including requeue promotion) is
+     * partition-scoped, so an instance kicked from the consumer group silently skips all of them.
+     */
+    public void ownedPartitionsGauge(final Region region, final Supplier<Number> size) {
+        Gauge.builder("bc.partitions.owned", size)
+                .tag("region", region.name())
+                .description("Partitions of the region's internal topic owned by this instance")
+                .register(registry);
     }
 
     private void count(final String name, final Region region, final int amount) {

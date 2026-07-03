@@ -199,6 +199,14 @@ public class JdbcOutboxRepository implements OutboxRepository {
                         .addValue("errorMessage", JdbcInboxRepository.truncate(errorMessage)));
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Partition-scoped like every drain: a row whose {@code KAFKA_PARTITION} is {@code NULL}
+     * can never match {@code IN (:partitions)} and is invisible to both promotion and the RELAY
+     * drain — it needs a one-off manual backfill of the partition before the pipeline will touch it
+     * again.
+     */
     @Override
     public RequeueOutcome requeueFailed(final Region region, final Collection<Integer> partitions, final int maxRetries) {
         if (partitions.isEmpty()) {

@@ -238,6 +238,14 @@ public class JdbcInboxRepository implements InboxRepository {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Partition-scoped like every drain: a row whose {@code KAFKA_PARTITION} is {@code NULL}
+     * (written by a pre-ADR-0001 code path) can never match {@code IN (:partitions)} and is
+     * invisible to both promotion and the PROCESS drain — it needs a one-off manual backfill of the
+     * partition before the pipeline will touch it again.
+     */
     @Override
     public RequeueOutcome requeueFailed(final Region region, final Collection<Integer> partitions, final int maxRetries) {
         if (partitions.isEmpty()) {
