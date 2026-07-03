@@ -1,17 +1,16 @@
 package com.bnpparibas.dec.bookingconfirmation.application.service;
 
 import com.bnpparibas.dec.bookingconfirmation.application.TraceMdc;
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEnricher;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeFilter;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventCodec;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.ParsedTradeEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeAggregation;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
-import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingProcessService;
@@ -19,6 +18,7 @@ import com.bnpparibas.dec.bookingconfirmation.domain.service.TradeEventAggregato
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -47,9 +47,8 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
 
     public DefaultBookingProcessService(
             final Region region,
-            final long tickIntervalMs,
+            final OwnedPartitions ownedPartitions,
             final int batchSize,
-            final int lockTtlMultiplier,
             final String publishedTopic,
             final InboxRepository inboxRepository,
             final OutboxRepository outboxRepository,
@@ -57,10 +56,8 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
             final TradeEventAggregator tradeEventAggregator,
             final TradeEnricher tradeEnricher,
             final TradeFilter tradeFilter,
-            final TransactionTemplate transactionTemplate,
-            final DistributedLockRepository lockRepository,
-            final InstanceId instanceId) {
-        super(region, tickIntervalMs, lockTtlMultiplier, lockRepository, instanceId);
+            final TransactionTemplate transactionTemplate) {
+        super(region, ownedPartitions);
         this.batchSize = batchSize;
         this.publishedTopic = publishedTopic;
         this.inboxRepository = inboxRepository;
@@ -73,9 +70,9 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
     }
 
     @Override
-    protected void doTick() {
+    protected void doTick(final Set<Integer> ownedPartitions) {
         transactionTemplate.executeWithoutResult(status -> {
-            final List<InboxMessage> batch = inboxRepository.findNew(region(), batchSize);
+            final List<InboxMessage> batch = inboxRepository.findNew(region(), ownedPartitions, batchSize);
             if (batch.isEmpty()) {
                 return;
             }
@@ -115,6 +112,7 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
                                 message.idempotencyKey(),
                                 publishedTopic,
                                 message.messageKey(),
+                                message.partition(),
                                 enriched,
                                 message.id(),
                                 message.traceId(),

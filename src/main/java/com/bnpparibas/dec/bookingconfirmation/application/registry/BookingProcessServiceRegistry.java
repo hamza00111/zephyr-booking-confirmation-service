@@ -2,13 +2,12 @@ package com.bnpparibas.dec.bookingconfirmation.application.registry;
 
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties.RegionProperties;
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.application.service.DefaultBookingProcessService;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEnricher;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeFilter;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventCodec;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
-import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingProcessService;
@@ -28,8 +27,7 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
     private final TradeEnricher tradeEnricher;
     private final TradeFilter tradeFilter;
     private final TransactionTemplate transactionTemplate;
-    private final DistributedLockRepository lockRepository;
-    private final InstanceId instanceId;
+    private final OwnedPartitions ownedPartitions;
 
     public BookingProcessServiceRegistry(
             final BookingConfirmationProperties properties,
@@ -39,8 +37,7 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
             final TradeEnricher tradeEnricher,
             final TradeFilter tradeFilter,
             final TransactionTemplate transactionTemplate,
-            final DistributedLockRepository lockRepository,
-            final InstanceId instanceId) {
+            final OwnedPartitions ownedPartitions) {
         super(properties);
         this.inboxRepository = inboxRepository;
         this.outboxRepository = outboxRepository;
@@ -48,17 +45,15 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
         this.tradeEnricher = tradeEnricher;
         this.tradeFilter = tradeFilter;
         this.transactionTemplate = transactionTemplate;
-        this.lockRepository = lockRepository;
-        this.instanceId = instanceId;
+        this.ownedPartitions = ownedPartitions;
     }
 
     @Override
     protected BookingProcessService buildService(final Region region, final RegionProperties regionProperties) {
         return new DefaultBookingProcessService(
                 region,
-                properties().process().tickIntervalMs(),
+                ownedPartitions,
                 properties().process().batchSize(),
-                regionProperties.lockTtlMultiplier(),
                 regionProperties.publishedTopic(),
                 inboxRepository,
                 outboxRepository,
@@ -66,8 +61,6 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
                 tradeEventAggregator,
                 tradeEnricher,
                 tradeFilter,
-                transactionTemplate,
-                lockRepository,
-                instanceId);
+                transactionTemplate);
     }
 }

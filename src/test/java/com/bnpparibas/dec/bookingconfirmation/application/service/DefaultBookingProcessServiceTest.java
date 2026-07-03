@@ -6,18 +6,16 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventCodec;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.ProcessType;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
-import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.TradeEventAggregator;
-import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -33,8 +31,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 @ExtendWith(MockitoExtension.class)
 class DefaultBookingProcessServiceTest {
 
-    private static final InstanceId INSTANCE = new InstanceId("test-instance");
     private static final String PAYLOAD = "{\"eventType\":\"CREATED\",\"traceId\":\"trace-1\"}";
+    private static final String BUSTED_PAYLOAD = "{\"eventType\":\"BUSTED\",\"traceId\":\"trace-1\"}";
 
     @Mock
     private InboxRepository inboxRepository;
@@ -45,14 +43,12 @@ class DefaultBookingProcessServiceTest {
     @Mock
     private TradeEventCodec tradeEventCodec;
 
-    @Mock
-    private DistributedLockRepository lockRepository;
+    private final OwnedPartitions ownedPartitions = new OwnedPartitions();
 
     @Test
     void tick_shouldStageOutboxEventCarryingTraceId_andMarkProcessed_whenSingleCreated() {
         var service = processService();
-        lockAcquired();
-        given(inboxRepository.findNew(Region.AMER, 200)).willReturn(List.of(inbox(1L, "K1")));
+        given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(inbox(1L, "K1")));
         given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
 
         service.tick();
@@ -65,8 +61,7 @@ class DefaultBookingProcessServiceTest {
     @Test
     void tick_shouldMarkInvalid_whenEventTypeUnreadable() {
         var service = processService();
-        lockAcquired();
-        given(inboxRepository.findNew(Region.AMER, 200)).willReturn(List.of(inbox(1L, "K1")));
+        given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(inbox(1L, "K1")));
         given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.empty());
 
         service.tick();
@@ -78,8 +73,7 @@ class DefaultBookingProcessServiceTest {
     @Test
     void tick_shouldDoNothing_whenInboxEmpty() {
         var service = processService();
-        lockAcquired();
-        given(inboxRepository.findNew(Region.AMER, 200)).willReturn(List.of());
+        given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of());
 
         service.tick();
 
@@ -87,22 +81,89 @@ class DefaultBookingProcessServiceTest {
         verify(inboxRepository, never()).markProcessed(any(), any());
     }
 
-    private DefaultBookingProcessService processService() {
-        return new DefaultBookingProcessService(
-                Region.AMER, 1000, 200, 1, "published",
+    @Test
+    void tick_shouldMarkProcessFailure_whenTransformThrows() {
+        var owned = new OwnedPartitions();
+        owned.add(Region.AMER, 0);
+        var service = new DefaultBookingProcessService(
+                Region.AMER, owned, 200, "published",
                 inboxRepository, outboxRepository, tradeEventCodec, new TradeEventAggregator(),
-                (region, payload) -> payload, (region, payload) -> true,
-                transactionTemplate(), lockRepository, INSTANCE);
+                (region, payload) -> {
+                    throw new RuntimeException("boom");
+                },
+                (region, payload) -> true,
+                transactionTemplate());
+        given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(inbox(1L, "K1")));
+        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
+
+        service.tick();
+
+        verify(inboxRepository).markProcessFailure(Region.AMER, List.of(1L), "Transform failed in PROCESS stage");
+        verify(outboxRepository).insertAll(argThat(List::isEmpty));
     }
 
-    private void lockAcquired() {
-        given(lockRepository.acquireOrRefresh(
-                        eq(Region.AMER), eq(ProcessType.PROCESS), eq(INSTANCE), eq(Duration.ofMillis(1000))))
-                .willReturn(true);
+    @Test
+    void tick_shouldProcessButNotPublish_whenFilterDropsTheEvent() {
+        var owned = new OwnedPartitions();
+        owned.add(Region.AMER, 0);
+        var service = new DefaultBookingProcessService(
+                Region.AMER, owned, 200, "published",
+                inboxRepository, outboxRepository, tradeEventCodec, new TradeEventAggregator(),
+                (region, payload) -> payload,
+                (region, payload) -> false,
+                transactionTemplate());
+        given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(inbox(1L, "K1")));
+        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
+
+        service.tick();
+
+        verify(outboxRepository).insertAll(argThat(List::isEmpty));
+        verify(inboxRepository).markProcessed(Region.AMER, List.of(1L));
+    }
+
+    @Test
+    void tick_shouldMarkAggregated_whenCreateAndBustCollapse() {
+        var service = processService();
+        given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200)))
+                .willReturn(List.of(inbox(1L, "K", PAYLOAD), inbox(2L, "K", BUSTED_PAYLOAD)));
+        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
+        given(tradeEventCodec.eventType(BUSTED_PAYLOAD)).willReturn(Optional.of(TradeEventType.BUSTED));
+
+        service.tick();
+
+        verify(inboxRepository)
+                .markAggregated(eq(Region.AMER), argThat(ids -> ids.size() == 2 && ids.containsAll(List.of(1L, 2L))));
+        verify(outboxRepository).insertAll(argThat(List::isEmpty));
+    }
+
+    @Test
+    void tick_shouldSkip_whenNoOwnedPartitions() {
+        var service = new DefaultBookingProcessService(
+                Region.AMER, new OwnedPartitions(), 200, "published",
+                inboxRepository, outboxRepository, tradeEventCodec, new TradeEventAggregator(),
+                (region, payload) -> payload, (region, payload) -> true,
+                transactionTemplate());
+
+        service.tick();
+
+        verifyNoInteractions(inboxRepository, outboxRepository);
+    }
+
+    private DefaultBookingProcessService processService() {
+        ownedPartitions.add(Region.AMER, 0);
+        return new DefaultBookingProcessService(
+                Region.AMER, ownedPartitions, 200, "published",
+                inboxRepository, outboxRepository, tradeEventCodec, new TradeEventAggregator(),
+                (region, payload) -> payload, (region, payload) -> true,
+                transactionTemplate());
     }
 
     private static InboxMessage inbox(long id, String messageKey) {
-        return new InboxMessage(id, Region.AMER, "idem-" + id, "topic", 0, id, messageKey, PAYLOAD, "trace-1", null);
+        return inbox(id, messageKey, PAYLOAD);
+    }
+
+    private static InboxMessage inbox(long id, String messageKey, String payload) {
+        return new InboxMessage(id, Region.AMER, "idem-" + id, "topic", 0, id, messageKey, payload, "trace-1", null);
     }
 
     private static TransactionTemplate transactionTemplate() {

@@ -1,10 +1,10 @@
 package com.bnpparibas.dec.bookingconfirmation.application.service;
 
-import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
-import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingRequeueService;
+import java.util.Set;
 
 /**
  * REQUEUE stage: promotes outbox {@code SEND_FAILURE} rows back to {@code NEW} while their retry
@@ -18,20 +18,17 @@ public class DefaultBookingRequeueService extends AbstractRegionScopedService im
 
     public DefaultBookingRequeueService(
             final Region region,
-            final long tickIntervalMs,
+            final OwnedPartitions ownedPartitions,
             final int maxRetries,
-            final int lockTtlMultiplier,
-            final OutboxRepository outboxRepository,
-            final DistributedLockRepository lockRepository,
-            final InstanceId instanceId) {
-        super(region, tickIntervalMs, lockTtlMultiplier, lockRepository, instanceId);
+            final OutboxRepository outboxRepository) {
+        super(region, ownedPartitions);
         this.maxRetries = maxRetries;
         this.outboxRepository = outboxRepository;
     }
 
     @Override
-    protected void doTick() {
-        final int promoted = outboxRepository.requeueFailed(region(), maxRetries);
+    protected void doTick(final Set<Integer> ownedPartitions) {
+        final int promoted = outboxRepository.requeueFailed(region(), ownedPartitions, maxRetries);
         if (promoted > 0) {
             log.info("[{}] Requeued {} failed outbox row(s)", processIdentifier(), promoted);
         }

@@ -14,15 +14,15 @@ import java.util.concurrent.CompletableFuture;
  * implements it. Keeping the dependency pointing inward (application -> domain port <- infrastructure
  * adapter) is what lets the messaging technology change without touching the relay logic.
  */
-@SuppressWarnings("java:S1452")
 public interface DomainEventPublisher {
 
     /**
      * Publishes all events for a region, returning a per-event send future keyed by outbox row id.
+     * The future carries no value ({@link Void}) — the relay only observes completion or failure.
      *
      * <p>Implementations provide at-least-once delivery and resilience (e.g. a per-region circuit
      * breaker); when delivery is refused the returned futures complete exceptionally so the relay can
      * mark the rows {@code SEND_FAILURE}.
      */
-    Map<Long, CompletableFuture<?>> sendAll(Region region, List<OutboxEvent> events);
+    Map<Long, CompletableFuture<Void>> sendAll(Region region, List<OutboxEvent> events);
 }

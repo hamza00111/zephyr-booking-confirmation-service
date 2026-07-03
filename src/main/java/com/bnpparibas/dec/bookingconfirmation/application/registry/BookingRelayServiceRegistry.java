@@ -2,11 +2,10 @@ package com.bnpparibas.dec.bookingconfirmation.application.registry;
 
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties.RegionProperties;
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.application.service.DefaultBookingRelayService;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.DomainEventPublisher;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
-import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingRelayService;
 import com.bnpparibas.dec.bookingconfirmation.infrastructure.resilience.BookingConfirmationCircuitBreakerRegistry;
@@ -24,8 +23,7 @@ public class BookingRelayServiceRegistry extends BaseRegionServiceRegistry<Booki
     private final DomainEventPublisher publisher;
     private final BookingConfirmationCircuitBreakerRegistry breakerRegistry;
     private final TransactionTemplate transactionTemplate;
-    private final DistributedLockRepository lockRepository;
-    private final InstanceId instanceId;
+    private final OwnedPartitions ownedPartitions;
 
     public BookingRelayServiceRegistry(
             final BookingConfirmationProperties properties,
@@ -33,15 +31,13 @@ public class BookingRelayServiceRegistry extends BaseRegionServiceRegistry<Booki
             final DomainEventPublisher publisher,
             final BookingConfirmationCircuitBreakerRegistry breakerRegistry,
             final TransactionTemplate transactionTemplate,
-            final DistributedLockRepository lockRepository,
-            final InstanceId instanceId) {
+            final OwnedPartitions ownedPartitions) {
         super(properties);
         this.outboxRepository = outboxRepository;
         this.publisher = publisher;
         this.breakerRegistry = breakerRegistry;
         this.transactionTemplate = transactionTemplate;
-        this.lockRepository = lockRepository;
-        this.instanceId = instanceId;
+        this.ownedPartitions = ownedPartitions;
     }
 
     @Override
@@ -49,13 +45,10 @@ public class BookingRelayServiceRegistry extends BaseRegionServiceRegistry<Booki
         breakerRegistry.register(region);
         return new DefaultBookingRelayService(
                 region,
-                properties().relay().tickIntervalMs(),
+                ownedPartitions,
                 properties().relay().batchSize(),
-                regionProperties.lockTtlMultiplier(),
                 outboxRepository,
                 publisher,
-                transactionTemplate,
-                lockRepository,
-                instanceId);
+                transactionTemplate);
     }
 }

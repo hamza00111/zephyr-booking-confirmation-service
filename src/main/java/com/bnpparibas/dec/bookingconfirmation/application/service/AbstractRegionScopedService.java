@@ -1,78 +1,39 @@
 package com.bnpparibas.dec.bookingconfirmation.application.service;
 
-import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
-import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingConfirmationService;
-import java.time.Duration;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Common lock + pause + tick-guard behaviour for the three scheduled, region-scoped stages.
+ * Common tick behaviour for the three scheduled, region-scoped stages.
  *
- * <p>{@link #tick()} is final: it skips when paused, skips when the per-region distributed lock is
- * held by a live peer, and otherwise delegates to {@link #doTick()} with exceptions logged and
- * contained so the scheduler keeps running for every other region/stage.
+ * <p>{@link #tick()} is final: it skips when this instance owns no partitions of the region, and
+ * otherwise delegates to {@link #doTick(Set)} with exceptions logged and contained so the scheduler
+ * keeps running for every other region/stage.
+ *
+ * <p>Concurrency across horizontally-scaled instances needs no application-level lock: each stage
+ * drains only the partitions this instance owns (ADR 0001), so a trade's events are processed and
+ * published by a single instance in order, and {@code FOR UPDATE SKIP LOCKED} fences the brief
+ * rebalance overlap.
  */
 public abstract class AbstractRegionScopedService implements BookingConfirmationService {
 
     protected final Logger log = LoggerFactory.getLogger(getClass());
 
     private final Region region;
-    private final long tickIntervalMs;
-    private final int lockTtlMultiplier;
-    private final DistributedLockRepository lockRepository;
-    private final InstanceId instanceId;
-    private final AtomicBoolean paused = new AtomicBoolean(false);
+    private final OwnedPartitions ownedPartitions;
 
-    protected AbstractRegionScopedService(
-            final Region region,
-            final long tickIntervalMs,
-            final int lockTtlMultiplier,
-            final DistributedLockRepository lockRepository,
-            final InstanceId instanceId) {
+    protected AbstractRegionScopedService(final Region region, final OwnedPartitions ownedPartitions) {
         this.region = region;
-        this.tickIntervalMs = tickIntervalMs;
-        this.lockTtlMultiplier = lockTtlMultiplier;
-        this.lockRepository = lockRepository;
-        this.instanceId = instanceId;
+        this.ownedPartitions = ownedPartitions;
     }
 
     @Override
     public Region region() {
         return region;
-    }
-
-    @Override
-    public void pause() {
-        paused.set(true);
-    }
-
-    @Override
-    public void resume() {
-        paused.set(false);
-    }
-
-    @Override
-    public boolean isPaused() {
-        return paused.get();
-    }
-
-    @Override
-    public boolean shouldRunTick() {
-        return !paused.get();
-    }
-
-    @Override
-    public Duration lockTtl() {
-        return Duration.ofMillis(tickIntervalMs * lockTtlMultiplier);
-    }
-
-    @Override
-    public boolean refreshLock() {
-        return lockRepository.acquireOrRefresh(region, processType(), instanceId, lockTtl());
     }
 
     @Override
@@ -82,19 +43,17 @@ public abstract class AbstractRegionScopedService implements BookingConfirmation
 
     @Override
     public final void tick() {
-        if (!shouldRunTick()) {
-            return;
-        }
-        if (!refreshLock()) {
-            return;
+        final Set<Integer> owned = ownedPartitions.forRegion(region);
+        if (owned.isEmpty()) {
+            return; // this instance currently owns no partitions of this region — nothing to drain
         }
         try {
-            doTick();
+            doTick(owned);
         } catch (final RuntimeException exception) {
             log.error("[{}] Tick failed", processIdentifier(), exception);
         }
     }
 
-    /** The stage-specific work, run only when this instance owns the region lock. */
-    protected abstract void doTick();
+    /** The stage-specific work, restricted to the partitions this instance owns for the region. */
+    protected abstract void doTick(Set<Integer> ownedPartitions);
 }

@@ -7,14 +7,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.DomainEventPublisher;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.InstanceId;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.ProcessType;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
-import com.bnpparibas.dec.bookingconfirmation.domain.repository.DistributedLockRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,26 +29,22 @@ import org.springframework.transaction.support.TransactionTemplate;
 @ExtendWith(MockitoExtension.class)
 class DefaultBookingRelayServiceTest {
 
-    private static final InstanceId INSTANCE = new InstanceId("test-instance");
-
     @Mock
     private OutboxRepository outboxRepository;
 
     @Mock
     private DomainEventPublisher publisher;
 
-    @Mock
-    private DistributedLockRepository lockRepository;
+    private final OwnedPartitions ownedPartitions = new OwnedPartitions();
 
     @Test
     void tick_shouldMarkSentForSuccessesAndSendFailureForFailures() {
         var service = relayService();
-        lockAcquired();
         var ok = outboxEvent(1L);
         var bad = outboxEvent(2L);
-        given(outboxRepository.findNew(Region.AMER, 100)).willReturn(List.of(ok, bad));
-        Map<Long, CompletableFuture<?>> futures = new LinkedHashMap<>();
-        futures.put(1L, CompletableFuture.completedFuture("ok"));
+        given(outboxRepository.findNew(eq(Region.AMER), any(), eq(100))).willReturn(List.of(ok, bad));
+        Map<Long, CompletableFuture<Void>> futures = new LinkedHashMap<>();
+        futures.put(1L, CompletableFuture.completedFuture(null));
         futures.put(2L, CompletableFuture.failedFuture(new RuntimeException("boom")));
         given(publisher.sendAll(Region.AMER, List.of(ok, bad))).willReturn(futures);
 
@@ -64,8 +57,7 @@ class DefaultBookingRelayServiceTest {
     @Test
     void tick_shouldNotPublish_whenOutboxEmpty() {
         var service = relayService();
-        lockAcquired();
-        given(outboxRepository.findNew(Region.AMER, 100)).willReturn(List.of());
+        given(outboxRepository.findNew(eq(Region.AMER), any(), eq(100))).willReturn(List.of());
 
         service.tick();
 
@@ -73,19 +65,24 @@ class DefaultBookingRelayServiceTest {
         verify(outboxRepository, never()).markSent(any(), any());
     }
 
-    private DefaultBookingRelayService relayService() {
-        return new DefaultBookingRelayService(
-                Region.AMER, 1000, 100, 1, outboxRepository, publisher, transactionTemplate(), lockRepository, INSTANCE);
+    @Test
+    void tick_shouldSkip_whenNoOwnedPartitions() {
+        var service = new DefaultBookingRelayService(
+                Region.AMER, new OwnedPartitions(), 100, outboxRepository, publisher, transactionTemplate());
+
+        service.tick();
+
+        verifyNoInteractions(outboxRepository, publisher);
     }
 
-    private void lockAcquired() {
-        given(lockRepository.acquireOrRefresh(
-                        eq(Region.AMER), eq(ProcessType.RELAY), eq(INSTANCE), eq(Duration.ofMillis(1000))))
-                .willReturn(true);
+    private DefaultBookingRelayService relayService() {
+        ownedPartitions.add(Region.AMER, 0);
+        return new DefaultBookingRelayService(
+                Region.AMER, ownedPartitions, 100, outboxRepository, publisher, transactionTemplate());
     }
 
     private static OutboxEvent outboxEvent(long id) {
-        return new OutboxEvent(id, Region.AMER, "idem-" + id, "published", "K1", "{}", id, "trace", null);
+        return new OutboxEvent(id, Region.AMER, "idem-" + id, "published", "K1", 0, "{}", id, "trace", null);
     }
 
     private static TransactionTemplate transactionTemplate() {

@@ -1,5 +1,6 @@
 package com.bnpparibas.dec.bookingconfirmation.infrastructure.kafka.consumer;
 
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.infrastructure.kafka.KafkaSslSupport;
 import java.util.HashMap;
 import java.util.Map;
@@ -59,6 +60,8 @@ public class KafkaConsumerConfig {
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
             final ConsumerFactory<String, String> consumerFactory,
+            final OwnedPartitions ownedPartitions,
+            final TopicRegionResolver topicRegionResolver,
             @Value("${app.booking-confirmation.consumer.concurrency:3}") final int concurrency,
             @Value("${app.booking-confirmation.consumer.retry-backoff-ms:2000}") final long retryBackoffMs,
             @Value("${app.booking-confirmation.consumer.retry-max-attempts:3}") final long retryMaxAttempts) {
@@ -67,6 +70,10 @@ public class KafkaConsumerConfig {
         factory.setConsumerFactory(consumerFactory);
         factory.setConcurrency(concurrency);
         factory.getContainerProperties().setAckMode(AckMode.MANUAL_IMMEDIATE);
+        // Track which partitions this instance owns so the scheduled drains can scope by them (ADR 0001).
+        factory.getContainerProperties()
+                .setConsumerRebalanceListener(
+                        new OwnedPartitionsRebalanceListener(ownedPartitions, topicRegionResolver));
 
         factory.setCommonErrorHandler(new DefaultErrorHandler(new FixedBackOff(retryBackoffMs, retryMaxAttempts)));
         return factory;

@@ -32,7 +32,6 @@ import org.springframework.stereotype.Component;
  */
 @Component
 @Slf4j
-@SuppressWarnings("java:S1452")
 public class KafkaDomainEventPublisher implements DomainEventPublisher {
 
     public static final String HEADER_IDEMPOTENCY_KEY = "idempotency-key";
@@ -55,8 +54,8 @@ public class KafkaDomainEventPublisher implements DomainEventPublisher {
      * @return map of outbox row id to send future; never null, may be empty.
      */
     @Override
-    public Map<Long, CompletableFuture<?>> sendAll(final Region region, final List<OutboxEvent> events) {
-        final Map<Long, CompletableFuture<?>> futures = new LinkedHashMap<>();
+    public Map<Long, CompletableFuture<Void>> sendAll(final Region region, final List<OutboxEvent> events) {
+        final Map<Long, CompletableFuture<Void>> futures = new LinkedHashMap<>();
         if (events.isEmpty()) {
             return futures;
         }
@@ -84,7 +83,8 @@ public class KafkaDomainEventPublisher implements DomainEventPublisher {
                             circuitBreaker.onSuccess(elapsedNanos, TimeUnit.NANOSECONDS);
                         }
                     });
-                    futures.put(event.id(), sendFuture);
+                    // The result value is irrelevant to the relay — expose completion/failure only.
+                    futures.put(event.id(), sendFuture.thenAccept(ignored -> {}));
                 } catch (final RuntimeException synchronousFailure) {
                     final long elapsedNanos = System.nanoTime() - startNanos;
                     circuitBreaker.onError(elapsedNanos, TimeUnit.NANOSECONDS, synchronousFailure);

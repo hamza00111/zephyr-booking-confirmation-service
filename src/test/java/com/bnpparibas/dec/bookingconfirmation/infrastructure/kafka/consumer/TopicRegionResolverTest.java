@@ -38,7 +38,7 @@ class TopicRegionResolverTest {
     }
 
     private static RegionProperties region(boolean active, String internalTopic) {
-        return new RegionProperties(active, 3, internalTopic, "published");
+        return new RegionProperties(active, internalTopic, "published");
     }
 
     private static BookingConfirmationProperties properties(Map<Region, RegionProperties> regions) {
