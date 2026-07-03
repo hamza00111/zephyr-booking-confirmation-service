@@ -22,21 +22,45 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 class JacksonTradeEventCodecTest {
 
+    /** Transcribed from a real TradeCreated event on the internal topic (ids shortened). */
     private static final String CREATED_ENVELOPE =
             """
             {
               "version": "1.0",
               "eventType": "TradeCreated",
-              "eventId": "0e37ee11-93ad-4f60-9be2-2e9a95e35771",
-              "pivotId": {"value": "TR-1"},
-              "traceId": "50fc0ac5-1111-2222-3333-6b9c00000000",
-              "externalSystem": "IRIS",
+              "eventId": "d0e41e27-6c8f-495e-aa70-42334ff320ad",
+              "pivotId": {
+                "id": "444071456_1"
+              },
+              "traceId": "075944c1-c852-4e57-be76-c1fc9bbc5036",
+              "externalSystem": "UBIX",
               "flowDirection": "INBOUND",
-              "hub": "NY",
-              "occurredAt": "2026-07-01T10:15:30Z",
-              "recordedAt": "2026-07-01T10:15:31Z",
-              "auditInfo": {"initiator": "N/A", "reason": "N/A", "comment": ""},
-              "payload": {"tradeRef": "TR-1", "notional": 1000000.1234567890123456789, "legs": [{"id": 1}]}
+              "hub": "US",
+              "occurredAt": "2026-07-02T16:09:59.839430556Z",
+              "recordedAt": "2026-07-02T16:09:59.839441669Z",
+              "auditInfo": {
+                "initiator": "Booking confirmation publisher",
+                "reason": "Automated booking confirmation publishing workflow",
+                "comment": "Zephyr booking confirmation publisher service stream"
+              },
+              "payload": {
+                "externalSystemTradeId": {"id": "444071456_1"},
+                "externalSystem": {"name": "UBIX", "description": "Ubix back-office"},
+                "references": {
+                  "externalSystemTradeId": "444071456_1",
+                  "originalTradeId": null,
+                  "secondaryTradeId": null,
+                  "previousTradeId": null,
+                  "universalTradeId": null,
+                  "basketId": null,
+                  "orderId": "G182559711",
+                  "reportTrackingNumber": null
+                },
+                "tradeUpdateDateTime": "2026-07-01T09:01:39",
+                "matchingStatus": "MATCHED",
+                "clearingStatus": "CLEARED",
+                "notional": 1000000.1234567890123456789
+              }
             }
             """;
 
@@ -108,11 +132,16 @@ class JacksonTradeEventCodecTest {
 
         assertThat(event).isInstanceOf(TradeCreatedEvent.class);
         assertThat(event.eventType()).isEqualTo(TradeEventType.TRADE_CREATED);
-        assertThat(event.eventId()).isEqualTo(UUID.fromString("0e37ee11-93ad-4f60-9be2-2e9a95e35771"));
+        assertThat(event.eventId()).isEqualTo(UUID.fromString("d0e41e27-6c8f-495e-aa70-42334ff320ad"));
         assertThat(event.flowDirection()).isEqualTo(FlowDirection.INBOUND);
-        assertThat(event.occurredAt()).isEqualTo(Instant.parse("2026-07-01T10:15:30Z"));
-        assertThat(event.auditInfo().initiator()).isEqualTo("N/A");
-        assertThat(event.pivotId().get("value").asText()).isEqualTo("TR-1");
+        assertThat(event.externalSystem()).isEqualTo("UBIX");
+        assertThat(event.hub()).isEqualTo("US");
+        // Nulls inside the opaque payload survive untouched.
+        assertThat(event.payload().get("references").get("originalTradeId").isNull()).isTrue();
+        // Nanosecond precision from the real producer must survive the Instant round-trip.
+        assertThat(event.occurredAt()).isEqualTo(Instant.parse("2026-07-02T16:09:59.839430556Z"));
+        assertThat(event.auditInfo().initiator()).isEqualTo("Booking confirmation publisher");
+        assertThat(event.pivotId().get("id").asText()).isEqualTo("444071456_1");
         // Opaque payload: decimal precision must survive (BigDecimal, not double).
         assertThat(event.payload().get("notional").decimalValue())
                 .isEqualByComparingTo(new BigDecimal("1000000.1234567890123456789"));
