@@ -1,6 +1,7 @@
 package com.bnpparibas.dec.bookingconfirmation.infrastructure.serialization;
 
 import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
+import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.EventChangeType;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.TradeEvent;
 import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -36,7 +37,11 @@ public class TradeEventJacksonConfig {
         final SimpleModule sqlSerializationModule = new SimpleModule("trade-event-sql-types")
                 .addSerializer(Clob.class, new ClobDateSerializer())
                 .addSerializer(Date.class, new SqlDateSerializer())
-                .addSerializer(Timestamp.class, new SqlTimeStampSerializer());
+                .addSerializer(Timestamp.class, new SqlTimeStampSerializer())
+                // The envelope declares eventType as the EventChangeType INTERFACE; without this
+                // mapping Jackson cannot construct it on read (InvalidDefinitionException: "no
+                // Creators... abstract types either need to be mapped to concrete types").
+                .addAbstractTypeMapping(EventChangeType.class, TradeEventType.class);
         return JsonMapper.builder()
                 .findAndAddModules()
                 .enable(StreamReadFeature.INCLUDE_SOURCE_IN_LOCATION)
@@ -48,6 +53,7 @@ public class TradeEventJacksonConfig {
                 .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
                 .addMixIn(TradeEvent.class, TradeEventsMixin.class)
                 .addMixIn(TradeEventType.class, TradeEventTypeMixin.class)
+                .addMixIn(EventChangeType.class, TradeEventTypeMixin.class)
                 .addModule(sqlSerializationModule)
                 .build();
     }

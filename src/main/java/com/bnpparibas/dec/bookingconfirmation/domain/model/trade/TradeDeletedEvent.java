@@ -1,6 +1,5 @@
 package com.bnpparibas.dec.bookingconfirmation.domain.model.trade;
 
-import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Instant;
 import java.util.UUID;
@@ -12,7 +11,7 @@ import org.jspecify.annotations.Nullable;
  */
 public record TradeDeletedEvent(
         @Nullable String version,
-        TradeEventType eventType,
+        EventChangeType eventType,
         @Nullable UUID eventId,
         @Nullable JsonNode pivotId,
         @Nullable UUID traceId,
