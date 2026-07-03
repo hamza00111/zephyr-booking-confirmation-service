@@ -104,6 +104,10 @@ public class KafkaConsumerConfig {
         errorHandler.addNotRetryableExceptions(IllegalStateException.class, IllegalArgumentException.class);
         // If parking fails, restart the backoff cycle on redelivery instead of recovering immediately.
         errorHandler.setResetStateOnRecoveryFailure(true);
+        // MANUAL_IMMEDIATE means only a successful listener run acks; a parked record was never
+        // acked, so commit its offset once recovery succeeds — otherwise the committed offset stays
+        // behind the parked record and every restart/rebalance redelivers and re-parks it.
+        errorHandler.setCommitRecovered(true);
         return errorHandler;
     }
 }

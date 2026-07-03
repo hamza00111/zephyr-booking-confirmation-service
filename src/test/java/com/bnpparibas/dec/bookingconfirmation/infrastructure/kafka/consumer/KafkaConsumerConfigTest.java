@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.anyMap;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.withSettings;
@@ -18,6 +20,8 @@ import org.mockito.Answers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.KafkaException;
+import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.listener.ContainerProperties.AckMode;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.listener.ListenerExecutionFailedException;
 import org.springframework.kafka.listener.MessageListenerContainer;
@@ -36,6 +40,13 @@ class KafkaConsumerConfigTest {
     private final Consumer<?, ?> consumer = mock(Consumer.class);
     private final MessageListenerContainer container =
             mock(MessageListenerContainer.class, withSettings().defaultAnswer(Answers.RETURNS_DEEP_STUBS));
+
+    KafkaConsumerConfigTest() {
+        // The commit-recovered gate reads the container's ack mode — mirror the production config.
+        var containerProperties = new ContainerProperties("internal.amer");
+        containerProperties.setAckMode(AckMode.MANUAL_IMMEDIATE);
+        org.mockito.Mockito.doReturn(containerProperties).when(container).getContainerProperties();
+    }
 
     private final KafkaConsumerConfig config = new KafkaConsumerConfig();
 
@@ -88,6 +99,41 @@ class KafkaConsumerConfigTest {
         handleUntilRecovered(handler, failure, record, 5);
 
         verify(inboxIngestionService).park(eq(record), any());
+    }
+
+    @Test
+    void errorHandler_shouldCommitRecoveredOffset_afterSuccessfulPark() {
+        final DefaultErrorHandler handler = KafkaConsumerConfig.errorHandler(inboxIngestionService, 0, 3);
+        final var record = new ConsumerRecord<>("internal.amer", 0, 7L, "K1", "{}");
+        final var failure =
+                new ListenerExecutionFailedException("listener failed", new IllegalStateException("unmapped topic"));
+
+        handleUntilRecovered(handler, failure, record, 1);
+
+        // MANUAL_IMMEDIATE never acked the parked record — the handler must commit its offset, or
+        // the committed position stays behind it and every restart redelivers and re-parks it.
+        verify(consumer).commitSync(anyMap(), any());
+    }
+
+    @Test
+    void errorHandler_shouldNotCommitOffset_whenParkingFails() {
+        final DefaultErrorHandler handler = KafkaConsumerConfig.errorHandler(inboxIngestionService, 0, 0);
+        final var record = new ConsumerRecord<>("internal.amer", 0, 7L, "K1", "{}");
+        final var failure = new ListenerExecutionFailedException("listener failed", new RuntimeException("db blip"));
+        willThrow(new RuntimeException("park insert failed — db down"))
+                .given(inboxIngestionService)
+                .park(any(), any());
+
+        for (int attempt = 0; attempt < 3; attempt++) {
+            try {
+                handler.handleRemaining(failure, List.of(record), consumer, container);
+            } catch (final KafkaException expectedReseek) {
+                // recovery failed → seek back for redelivery
+            }
+        }
+
+        // No successful park, no commit: Kafka must redeliver — parking never trades loss for progress.
+        verify(consumer, never()).commitSync(anyMap(), any());
     }
 
     @Test
