@@ -1,6 +1,6 @@
 package com.bnpparibas.dec.bookingconfirmation.infrastructure.serialization;
 
-import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.EventChangeType;
+import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.TradeEvent;
 import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -47,7 +47,7 @@ public class TradeEventJacksonConfig {
                 // Decimals in the opaque trade payload must not lose precision through a double.
                 .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
                 .addMixIn(TradeEvent.class, TradeEventsMixin.class)
-                .addMixIn(EventChangeType.class, TradeEventTypeMixin.class)
+                .addMixIn(TradeEventType.class, TradeEventTypeMixin.class)
                 .addModule(sqlSerializationModule)
                 .build();
     }

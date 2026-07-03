@@ -1,5 +1,6 @@
 package com.bnpparibas.dec.bookingconfirmation.domain.model.trade;
 
+import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Instant;
 import java.util.UUID;
@@ -8,7 +9,7 @@ import org.jspecify.annotations.Nullable;
 /** A trade was amended upstream. See {@link TradeEvent} for the copy/divergence notes. */
 public record TradeAmendedEvent(
         @Nullable String version,
-        EventChangeType eventType,
+        TradeEventType eventType,
         @Nullable UUID eventId,
         @Nullable JsonNode pivotId,
         @Nullable UUID traceId,

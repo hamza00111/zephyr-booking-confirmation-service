@@ -9,10 +9,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import java.util.EnumMap;
-import java.util.Locale;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
@@ -20,46 +21,23 @@ import org.springframework.stereotype.Component;
 /**
  * Jackson adapter for the {@link TradeEventCodec} port.
  *
- * <p>Wire format (current): {@code {"eventType":"TRADE_CREATED","eventId":…}} — the {@code
- * eventType} field is both the change type and the polymorphic discriminator (see {@link
- * TradeEventsMixin}). Reading also accepts the legacy vocabularies ({@code "CREATED"}, {@code
- * "@type":"TRADE_CREATED"}, camel {@code "TradeCreated"}); writing always emits the current {@code
- * TRADE_*} names. The producer's {@code TRADE_DELETED} maps to this service's {@code BUSTED}
- * aggregation type.
+ * <p>Wire format: {@code {"eventType":"TradeCreated",…}} — the {@code eventType} field carries
+ * {@link TradeEventType#type()} and is also the polymorphic discriminator (see
+ * {@link TradeEventsMixin}). The vocabulary is exactly the enum's wire strings; unknown values mark
+ * the row INVALID ({@link #eventType}) or fail typed binding ({@link #deserialize}).
  *
- * <p>Uses the dedicated {@code tradeEventObjectMapper}: payloads are foreign JSON, so the
+ * <p>Uses the dedicated {@code tradeEventJsonMapper}: payloads are foreign JSON, so the
  * application's serialization settings must not leak into them.
  */
 @Component
 public class JacksonTradeEventCodec implements TradeEventCodec {
 
-    private static final String TYPE_FIELD = "@type";
     private static final String EVENT_TYPE_FIELD = "eventType";
     private static final String TRACE_ID_FIELD = "traceId";
-    private static final String TYPE_PREFIX = "TRADE_";
 
-    /** Normalized (uppercased) discriminator value -> local aggregation type, all vocabularies. */
-    private static final Map<String, TradeEventType> READ_NAMES = Map.ofEntries(
-            // Current wire vocabulary.
-            Map.entry("TRADE_CREATED", TradeEventType.CREATED),
-            Map.entry("TRADE_AMENDED", TradeEventType.AMENDED),
-            Map.entry("TRADE_DELETED", TradeEventType.BUSTED),
-            Map.entry("TRADE_BUSTED", TradeEventType.BUSTED),
-            // Legacy bare enum names.
-            Map.entry("CREATED", TradeEventType.CREATED),
-            Map.entry("AMENDED", TradeEventType.AMENDED),
-            Map.entry("BUSTED", TradeEventType.BUSTED),
-            Map.entry("DELETED", TradeEventType.BUSTED),
-            // Camel subtype names (uppercased) used by earlier mixin revisions.
-            Map.entry("TRADECREATED", TradeEventType.CREATED),
-            Map.entry("TRADEAMENDED", TradeEventType.AMENDED),
-            Map.entry("TRADEDELETED", TradeEventType.BUSTED));
-
-    /** Local aggregation type -> canonical wire discriminator (the mixin subtype names). */
-    private static final Map<TradeEventType, String> WIRE_NAMES = new EnumMap<>(Map.of(
-            TradeEventType.CREATED, "TRADE_CREATED",
-            TradeEventType.AMENDED, "TRADE_AMENDED",
-            TradeEventType.BUSTED, "TRADE_DELETED"));
+    /** Wire discriminator ({@link TradeEventType#type()}) -> enum constant. */
+    private static final Map<String, TradeEventType> BY_WIRE_NAME = Arrays.stream(TradeEventType.values())
+            .collect(Collectors.toUnmodifiableMap(TradeEventType::type, Function.identity()));
 
     private final JsonMapper jsonMapper;
 
@@ -86,9 +64,7 @@ public class JacksonTradeEventCodec implements TradeEventCodec {
             if (!(root instanceof ObjectNode event)) {
                 throw new IllegalStateException("TradeEvent payload is not a JSON object");
             }
-            event.put(EVENT_TYPE_FIELD, WIRE_NAMES.get(target));
-            // Kept for any legacy reader still keyed on @type; the typed round-trip drops it.
-            event.put(TYPE_FIELD, TYPE_PREFIX + target.name());
+            event.put(EVENT_TYPE_FIELD, target.type());
             return jsonMapper.writeValueAsString(event);
         } catch (final JsonProcessingException unparseable) {
             // eventType() parsed this payload moments ago; reaching here is a programming error.
@@ -118,8 +94,7 @@ public class JacksonTradeEventCodec implements TradeEventCodec {
         if (!(root instanceof ObjectNode event)) {
             throw new TradeEventBindingException("TradeEvent payload is not a JSON object");
         }
-        // Normalize the discriminator so legacy-vocabulary payloads bind to the right subtype.
-        event.put(EVENT_TYPE_FIELD, WIRE_NAMES.get(type));
+        event.put(EVENT_TYPE_FIELD, type.type());
         try {
             return jsonMapper.treeToValue(event, TradeEvent.class);
         } catch (final JacksonException bindingFailure) {
@@ -137,22 +112,11 @@ public class JacksonTradeEventCodec implements TradeEventCodec {
     }
 
     private static Optional<TradeEventType> resolveType(final JsonNode root) {
-        String name = text(root, EVENT_TYPE_FIELD);
-        if (name == null) {
-            name = text(root, TYPE_FIELD);
-        }
+        final String name = text(root, EVENT_TYPE_FIELD);
         if (name == null) {
             return Optional.empty();
         }
-        final String normalized = name.trim().toUpperCase(Locale.ROOT);
-        final TradeEventType direct = READ_NAMES.get(normalized);
-        if (direct != null) {
-            return Optional.of(direct);
-        }
-        if (normalized.startsWith(TYPE_PREFIX)) {
-            return Optional.ofNullable(READ_NAMES.get(normalized.substring(TYPE_PREFIX.length())));
-        }
-        return Optional.empty();
+        return Optional.ofNullable(BY_WIRE_NAME.get(name.trim()));
     }
 
     private static @Nullable String text(final JsonNode root, final String field) {

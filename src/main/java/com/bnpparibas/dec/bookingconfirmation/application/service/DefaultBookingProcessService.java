@@ -10,13 +10,13 @@ import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.ParsedTradeEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeAggregation;
+import com.bnpparibas.dec.bookingconfirmation.domain.model.BookingConfirmationAggregation;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.TradeEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingProcessService;
-import com.bnpparibas.dec.bookingconfirmation.domain.service.TradeEventAggregator;
+import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingConfirmationTradeEventAggregator;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -44,7 +44,7 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
     private final InboxRepository inboxRepository;
     private final OutboxRepository outboxRepository;
     private final TradeEventCodec tradeEventCodec;
-    private final TradeEventAggregator tradeEventAggregator;
+    private final BookingConfirmationTradeEventAggregator tradeEventAggregator;
     private final TradeEnricher tradeEnricher;
     private final TradeFilter tradeFilter;
     private final TransactionTemplate transactionTemplate;
@@ -57,7 +57,7 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
             final InboxRepository inboxRepository,
             final OutboxRepository outboxRepository,
             final TradeEventCodec tradeEventCodec,
-            final TradeEventAggregator tradeEventAggregator,
+            final BookingConfirmationTradeEventAggregator tradeEventAggregator,
             final TradeEnricher tradeEnricher,
             final TradeFilter tradeFilter,
             final TransactionTemplate transactionTemplate,
@@ -98,7 +98,7 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
             final List<Long> processed = new ArrayList<>();
             final List<Long> aggregatedAway = new ArrayList<>();
             final List<Long> failed = new ArrayList<>();
-            for (final TradeAggregation aggregation : tradeEventAggregator.aggregate(events)) {
+            for (final BookingConfirmationAggregation aggregation : tradeEventAggregator.aggregate(events)) {
                 final ParsedTradeEvent survivor = aggregation.survivor();
                 if (survivor == null) {
                     // Whole group netted out: created and busted within this drain.
@@ -109,7 +109,7 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
                 try (var ignored = TraceMdc.scope(message.traceId())) {
                     // Re-typing stays JSON-level, before binding: the rewritten discriminator makes
                     // Jackson instantiate the target subtype (records cannot change class).
-                    final String payload = survivor.type() == aggregation.emitAs()
+                    final String payload = survivor.eventType() == aggregation.emitAs()
                             ? message.rawPayload()
                             : tradeEventCodec.rewriteType(message.rawPayload(), aggregation.emitAs());
                     final TradeEvent event = tradeEventCodec.deserialize(payload);

@@ -9,11 +9,14 @@ class TradeEventTypeTest {
     @Test
     void values_areTheThreeLifecycleTypes() {
         assertThat(TradeEventType.values())
-                .containsExactly(TradeEventType.CREATED, TradeEventType.AMENDED, TradeEventType.BUSTED);
+                .containsExactly(
+                        TradeEventType.TRADE_CREATED, TradeEventType.TRADE_AMENDED, TradeEventType.TRADE_DELETED);
     }
 
     @Test
-    void valueOf_resolvesByName() {
-        assertThat(TradeEventType.valueOf("BUSTED")).isEqualTo(TradeEventType.BUSTED);
+    void type_isTheWireDiscriminator() {
+        assertThat(TradeEventType.TRADE_CREATED.type()).isEqualTo("TradeCreated");
+        assertThat(TradeEventType.TRADE_AMENDED.type()).isEqualTo("TradeAmended");
+        assertThat(TradeEventType.TRADE_DELETED.type()).isEqualTo("TradeDeleted");
     }
 }

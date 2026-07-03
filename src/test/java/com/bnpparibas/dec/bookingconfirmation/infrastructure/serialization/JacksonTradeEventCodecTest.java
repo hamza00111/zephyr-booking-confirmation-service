@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventBindingException;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.EventChangeType;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.FlowDirection;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.TradeAmendedEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.TradeCreatedEvent;
@@ -27,7 +26,7 @@ class JacksonTradeEventCodecTest {
             """
             {
               "version": "1.0",
-              "eventType": "TRADE_CREATED",
+              "eventType": "TradeCreated",
               "eventId": "0e37ee11-93ad-4f60-9be2-2e9a95e35771",
               "pivotId": {"value": "TR-1"},
               "traceId": "50fc0ac5-1111-2222-3333-6b9c00000000",
@@ -46,44 +45,43 @@ class JacksonTradeEventCodecTest {
 
     @ParameterizedTest
     @MethodSource("typedPayloads")
-    void eventType_shouldResolveType_acrossAllVocabularies(String payload, TradeEventType expected) {
+    void eventType_shouldResolveWireVocabulary(String payload, TradeEventType expected) {
         assertThat(codec.eventType(payload)).contains(expected);
     }
 
     static Stream<Arguments> typedPayloads() {
         return Stream.of(
-                // Current wire vocabulary (mixin subtype names).
-                Arguments.of("{\"eventType\":\"TRADE_CREATED\"}", TradeEventType.CREATED),
-                Arguments.of("{\"eventType\":\"TRADE_AMENDED\"}", TradeEventType.AMENDED),
-                Arguments.of("{\"eventType\":\"TRADE_DELETED\"}", TradeEventType.BUSTED),
-                // Legacy bare names.
-                Arguments.of("{\"eventType\":\"CREATED\"}", TradeEventType.CREATED),
-                Arguments.of("{\"eventType\":\"AMENDED\"}", TradeEventType.AMENDED),
-                Arguments.of("{\"eventType\":\"BUSTED\"}", TradeEventType.BUSTED),
-                Arguments.of("{\"eventType\":\"created\"}", TradeEventType.CREATED),       // case-insensitive
-                // Camel forms from earlier mixin revisions.
-                Arguments.of("{\"eventType\":\"TradeCreated\"}", TradeEventType.CREATED),
-                Arguments.of("{\"eventType\":\"TradeDeleted\"}", TradeEventType.BUSTED),
-                // Legacy @type fallback.
-                Arguments.of("{\"@type\":\"TRADE_AMENDED\"}", TradeEventType.AMENDED),
-                Arguments.of("{\"@type\":\"TRADE_BUSTED\",\"eventId\":\"x\"}", TradeEventType.BUSTED));
+                Arguments.of("{\"eventType\":\"TradeCreated\"}", TradeEventType.TRADE_CREATED),
+                Arguments.of("{\"eventType\":\"TradeAmended\"}", TradeEventType.TRADE_AMENDED),
+                Arguments.of("{\"eventType\":\"TradeDeleted\"}", TradeEventType.TRADE_DELETED),
+                Arguments.of("{\"eventType\":\" TradeCreated \"}", TradeEventType.TRADE_CREATED)); // trimmed
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"not json at all", "{\"eventType\":\"NUKED\"}", "{\"eventId\":\"x\"}", "{}"})
+    @ValueSource(
+            strings = {
+                "not json at all",
+                "{\"eventType\":\"NUKED\"}",
+                "{\"eventId\":\"x\"}",
+                "{}",
+                // Retired vocabularies are no longer accepted.
+                "{\"eventType\":\"CREATED\"}",
+                "{\"eventType\":\"TRADE_CREATED\"}",
+                "{\"@type\":\"TRADE_AMENDED\"}"
+            })
     void eventType_shouldBeEmpty_whenTypeMissingOrUnreadable(String payload) {
         assertThat(codec.eventType(payload)).isEmpty();
     }
 
     @Test
     void traceId_shouldExtractTraceIdField_whenPresent() {
-        assertThat(codec.traceId("{\"traceId\":\"50fc0ac5-6b9c\",\"eventType\":\"TRADE_CREATED\"}"))
+        assertThat(codec.traceId("{\"traceId\":\"50fc0ac5-6b9c\",\"eventType\":\"TradeCreated\"}"))
                 .contains("50fc0ac5-6b9c");
     }
 
     @Test
     void traceId_shouldBeEmpty_whenFieldAbsent() {
-        assertThat(codec.traceId("{\"eventType\":\"TRADE_CREATED\"}")).isEmpty();
+        assertThat(codec.traceId("{\"eventType\":\"TradeCreated\"}")).isEmpty();
     }
 
     @Test
@@ -93,14 +91,13 @@ class JacksonTradeEventCodecTest {
 
     @Test
     void rewriteType_shouldEmitWireVocabulary_andPreserveOtherFields() {
-        String amended = "{\"@type\":\"TRADE_AMENDED\",\"eventType\":\"TRADE_AMENDED\",\"traceId\":\"t-1\",\"seq\":7}";
+        String amended = "{\"eventType\":\"TradeAmended\",\"traceId\":\"t-1\",\"seq\":7}";
 
-        String rewritten = codec.rewriteType(amended, TradeEventType.CREATED);
+        String rewritten = codec.rewriteType(amended, TradeEventType.TRADE_CREATED);
 
-        assertThat(codec.eventType(rewritten)).contains(TradeEventType.CREATED);
+        assertThat(codec.eventType(rewritten)).contains(TradeEventType.TRADE_CREATED);
         assertThat(rewritten)
-                .contains("\"eventType\":\"TRADE_CREATED\"")
-                .contains("\"@type\":\"TRADE_CREATED\"")
+                .contains("\"eventType\":\"TradeCreated\"")
                 .contains("\"traceId\":\"t-1\"")
                 .contains("\"seq\":7");
     }
@@ -110,7 +107,7 @@ class JacksonTradeEventCodecTest {
         TradeEvent event = codec.deserialize(CREATED_ENVELOPE);
 
         assertThat(event).isInstanceOf(TradeCreatedEvent.class);
-        assertThat(event.eventType()).isEqualTo(EventChangeType.TRADE_CREATED);
+        assertThat(event.eventType()).isEqualTo(TradeEventType.TRADE_CREATED);
         assertThat(event.eventId()).isEqualTo(UUID.fromString("0e37ee11-93ad-4f60-9be2-2e9a95e35771"));
         assertThat(event.flowDirection()).isEqualTo(FlowDirection.INBOUND);
         assertThat(event.occurredAt()).isEqualTo(Instant.parse("2026-07-01T10:15:30Z"));
@@ -131,12 +128,9 @@ class JacksonTradeEventCodecTest {
 
     static Stream<Arguments> subtypeBindings() {
         return Stream.of(
-                Arguments.of("TRADE_CREATED", TradeCreatedEvent.class),
-                Arguments.of("TRADE_AMENDED", TradeAmendedEvent.class),
-                Arguments.of("TRADE_DELETED", TradeDeletedEvent.class),
-                // Legacy vocabulary binds too: the codec normalizes the discriminator before binding.
-                Arguments.of("CREATED", TradeCreatedEvent.class),
-                Arguments.of("BUSTED", TradeDeletedEvent.class));
+                Arguments.of("TradeCreated", TradeCreatedEvent.class),
+                Arguments.of("TradeAmended", TradeAmendedEvent.class),
+                Arguments.of("TradeDeleted", TradeDeletedEvent.class));
     }
 
     @Test
@@ -145,7 +139,7 @@ class JacksonTradeEventCodecTest {
 
         String json = codec.serialize(event);
 
-        assertThat(json).contains("\"eventType\":\"TRADE_CREATED\"");
+        assertThat(json).contains("\"eventType\":\"TradeCreated\"");
         TradeEvent reread = codec.deserialize(json);
         assertThat(reread).isEqualTo(event);
     }
@@ -164,7 +158,7 @@ class JacksonTradeEventCodecTest {
 
     @Test
     void deserialize_shouldThrowBindingException_whenEnvelopeFieldHasWrongShape() {
-        assertThatThrownBy(() -> codec.deserialize("{\"eventType\":\"TRADE_CREATED\",\"eventId\":\"not a uuid\"}"))
+        assertThatThrownBy(() -> codec.deserialize("{\"eventType\":\"TradeCreated\",\"eventId\":\"not a uuid\"}"))
                 .isInstanceOf(TradeEventBindingException.class);
     }
 }

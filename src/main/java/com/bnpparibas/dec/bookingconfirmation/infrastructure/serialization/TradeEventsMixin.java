@@ -17,8 +17,8 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
         property = "eventType",
         visible = true)
 @JsonSubTypes({
-    @JsonSubTypes.Type(value = TradeCreatedEvent.class, name = "TRADE_CREATED"),
-    @JsonSubTypes.Type(value = TradeAmendedEvent.class, name = "TRADE_AMENDED"),
-    @JsonSubTypes.Type(value = TradeDeletedEvent.class, name = "TRADE_DELETED")
+    @JsonSubTypes.Type(value = TradeCreatedEvent.class, name = "TradeCreated"),
+    @JsonSubTypes.Type(value = TradeAmendedEvent.class, name = "TradeAmended"),
+    @JsonSubTypes.Type(value = TradeDeletedEvent.class, name = "TradeDeleted")
 })
 public interface TradeEventsMixin {}

@@ -17,12 +17,11 @@ import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventCodec;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.EventChangeType;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.TradeCreatedEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.TradeEvent;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
-import com.bnpparibas.dec.bookingconfirmation.domain.service.TradeEventAggregator;
+import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingConfirmationTradeEventAggregator;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -38,10 +37,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 @ExtendWith(MockitoExtension.class)
 class DefaultBookingProcessServiceTest {
 
-    private static final String PAYLOAD = "{\"eventType\":\"TRADE_CREATED\",\"traceId\":\"trace-1\"}";
-    private static final String BUSTED_PAYLOAD = "{\"eventType\":\"TRADE_DELETED\",\"traceId\":\"trace-1\"}";
+    private static final String PAYLOAD = "{\"eventType\":\"TradeCreated\",\"traceId\":\"trace-1\"}";
+    private static final String BUSTED_PAYLOAD = "{\"eventType\":\"TradeDeleted\",\"traceId\":\"trace-1\"}";
     private static final TradeEvent EVENT = typedEvent();
-    private static final String SERIALIZED = "{\"eventType\":\"TRADE_CREATED\",\"roundTripped\":true}";
+    private static final String SERIALIZED = "{\"eventType\":\"TradeCreated\",\"roundTripped\":true}";
 
     @Mock
     private InboxRepository inboxRepository;
@@ -58,7 +57,7 @@ class DefaultBookingProcessServiceTest {
     void tick_shouldStageRoundTrippedOutboxEventCarryingTraceIdAndPartition_whenSingleCreated() {
         var service = processService();
         given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(inbox(1L, "K1")));
-        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
+        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.TRADE_CREATED));
         given(tradeEventCodec.deserialize(PAYLOAD)).willReturn(EVENT);
         given(tradeEventCodec.serialize(EVENT)).willReturn(SERIALIZED);
 
@@ -95,7 +94,7 @@ class DefaultBookingProcessServiceTest {
                 (region, event) -> true);
         given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200)))
                 .willReturn(List.of(inbox(1L, "K1"), inbox(2L, "K1")));
-        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
+        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.TRADE_CREATED));
         given(tradeEventCodec.deserialize(PAYLOAD)).willReturn(EVENT);
 
         service.tick();
@@ -112,7 +111,7 @@ class DefaultBookingProcessServiceTest {
         var service = processService();
         given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200)))
                 .willReturn(List.of(inbox(1L, "K1"), inbox(2L, "K1")));
-        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
+        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.TRADE_CREATED));
         given(tradeEventCodec.deserialize(PAYLOAD))
                 .willThrow(new TradeEventBindingException("envelope field has wrong shape"));
 
@@ -127,7 +126,7 @@ class DefaultBookingProcessServiceTest {
     void tick_shouldMarkProcessedWithoutOutboxRow_whenFilterDropsSurvivor() {
         var service = processService((region, event) -> event, (region, event) -> false);
         given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(inbox(1L, "K1")));
-        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
+        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.TRADE_CREATED));
         given(tradeEventCodec.deserialize(PAYLOAD)).willReturn(EVENT);
 
         service.tick();
@@ -141,8 +140,8 @@ class DefaultBookingProcessServiceTest {
         var service = processService();
         given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200)))
                 .willReturn(List.of(inbox(1L, "K", PAYLOAD), inbox(2L, "K", BUSTED_PAYLOAD)));
-        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.CREATED));
-        given(tradeEventCodec.eventType(BUSTED_PAYLOAD)).willReturn(Optional.of(TradeEventType.BUSTED));
+        given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.TRADE_CREATED));
+        given(tradeEventCodec.eventType(BUSTED_PAYLOAD)).willReturn(Optional.of(TradeEventType.TRADE_DELETED));
 
         service.tick();
 
@@ -155,11 +154,11 @@ class DefaultBookingProcessServiceTest {
     void tick_shouldRewriteThenBindAndSerialize_whenSurvivorTypeDiffersFromEmittedType() {
         var service = processService();
         var created = inbox(1L, "K1", PAYLOAD);
-        var amended = inbox(2L, "K1", "{\"eventType\":\"TRADE_AMENDED\"}");
+        var amended = inbox(2L, "K1", "{\"eventType\":\"TradeAmended\"}");
         given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(created, amended));
-        given(tradeEventCodec.eventType(created.rawPayload())).willReturn(Optional.of(TradeEventType.CREATED));
-        given(tradeEventCodec.eventType(amended.rawPayload())).willReturn(Optional.of(TradeEventType.AMENDED));
-        given(tradeEventCodec.rewriteType(amended.rawPayload(), TradeEventType.CREATED)).willReturn("{rewritten}");
+        given(tradeEventCodec.eventType(created.rawPayload())).willReturn(Optional.of(TradeEventType.TRADE_CREATED));
+        given(tradeEventCodec.eventType(amended.rawPayload())).willReturn(Optional.of(TradeEventType.TRADE_AMENDED));
+        given(tradeEventCodec.rewriteType(amended.rawPayload(), TradeEventType.TRADE_CREATED)).willReturn("{rewritten}");
         given(tradeEventCodec.deserialize("{rewritten}")).willReturn(EVENT);
         given(tradeEventCodec.serialize(EVENT)).willReturn(SERIALIZED);
 
@@ -187,7 +186,7 @@ class DefaultBookingProcessServiceTest {
     void tick_shouldSkip_whenNoOwnedPartitions() {
         var service = new DefaultBookingProcessService(
                 Region.AMER, new OwnedPartitions(), 200, "published",
-                inboxRepository, outboxRepository, tradeEventCodec, new TradeEventAggregator(),
+                inboxRepository, outboxRepository, tradeEventCodec, new BookingConfirmationTradeEventAggregator(),
                 (region, event) -> event, (region, event) -> true,
                 transactionTemplate(), BookingConfirmationMetrics.noop());
 
@@ -204,7 +203,7 @@ class DefaultBookingProcessServiceTest {
         ownedPartitions.add(Region.AMER, 0);
         return new DefaultBookingProcessService(
                 Region.AMER, ownedPartitions, 200, "published",
-                inboxRepository, outboxRepository, tradeEventCodec, new TradeEventAggregator(),
+                inboxRepository, outboxRepository, tradeEventCodec, new BookingConfirmationTradeEventAggregator(),
                 enricher, filter,
                 transactionTemplate(), BookingConfirmationMetrics.noop());
     }
@@ -219,7 +218,7 @@ class DefaultBookingProcessServiceTest {
 
     private static TradeEvent typedEvent() {
         return new TradeCreatedEvent(
-                null, EventChangeType.TRADE_CREATED, null, null, null, null, null, null, null, null, null, null);
+                null, TradeEventType.TRADE_CREATED, null, null, null, null, null, null, null, null, null, null);
     }
 
     private static TransactionTemplate transactionTemplate() {

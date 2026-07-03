@@ -1,5 +1,6 @@
 package com.bnpparibas.dec.bookingconfirmation.domain.model.trade;
 
+import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Instant;
 import java.util.UUID;
@@ -22,14 +23,14 @@ import org.jspecify.annotations.Nullable;
  * swapped for it (same accessors; {@code payload} becomes the typed {@code Trade}).
  *
  * <p>Polymorphic JSON binding is configured externally via {@code TradeEventsMixin} (discriminator:
- * the {@code eventType} field, values {@code TRADE_CREATED} / {@code TRADE_AMENDED} /
- * {@code TRADE_DELETED}), keeping this package free of serialization annotations.
+ * the {@code eventType} field, values {@code TradeCreated} / {@code TradeAmended} /
+ * {@code TradeDeleted}), keeping this package free of serialization annotations.
  */
 public sealed interface TradeEvent permits TradeCreatedEvent, TradeAmendedEvent, TradeDeletedEvent {
 
     @Nullable String version();
 
-    EventChangeType eventType();
+    TradeEventType eventType();
 
     @Nullable UUID eventId();
 

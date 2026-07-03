@@ -12,7 +12,7 @@ import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingProcessService;
-import com.bnpparibas.dec.bookingconfirmation.domain.service.TradeEventAggregator;
+import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingConfirmationTradeEventAggregator;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -24,7 +24,7 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
     private final OutboxRepository outboxRepository;
     private final TradeEventCodec tradeEventCodec;
     // Pure, stateless domain logic — instantiated here rather than Spring-managed.
-    private final TradeEventAggregator tradeEventAggregator = new TradeEventAggregator();
+    private final BookingConfirmationTradeEventAggregator tradeEventAggregator = new BookingConfirmationTradeEventAggregator();
     private final TradeEnricher tradeEnricher;
     private final TradeFilter tradeFilter;
     private final TransactionTemplate transactionTemplate;
