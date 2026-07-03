@@ -38,8 +38,9 @@ public class TradeEventAggregator {
         final Map<Object, List<ParsedTradeEvent>> groups = new LinkedHashMap<>();
         for (final ParsedTradeEvent event : events) {
             final String messageKey = event.message().messageKey();
-            // A keyless event cannot be matched to its trade: the row id makes it a singleton group.
-            final Object groupKey = messageKey != null ? messageKey : event.id();
+            // A keyless event cannot be matched to its trade: its own identity makes it a singleton
+            // group (the row id is nullable, and null ids must not collapse keyless events together).
+            final Object groupKey = messageKey != null ? messageKey : event;
             groups.computeIfAbsent(groupKey, ignored -> new ArrayList<>()).add(event);
         }
         return groups.values().stream().map(TradeEventAggregator::collapse).toList();

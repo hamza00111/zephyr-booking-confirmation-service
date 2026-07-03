@@ -99,6 +99,19 @@ class TradeEventAggregatorTest {
         assertThat(result).hasSize(2);   // a missing key cannot identify a trade — each stays a singleton
     }
 
+    @Test
+    void aggregate_shouldKeepNullKeyedEventsSeparate_evenWhenTheirIdsAreNull() {
+        // No message key AND no row id — the events must still form two singleton groups.
+        var first = new ParsedTradeEvent(
+                new InboxMessage(null, Region.AMER, "idem-a", "topic", 0, 0L, null, "{}", null, null),
+                TradeEventType.CREATED);
+        var second = new ParsedTradeEvent(
+                new InboxMessage(null, Region.AMER, "idem-b", "topic", 0, 1L, null, "{}", null, null),
+                TradeEventType.BUSTED);
+
+        assertThat(aggregator.aggregate(List.of(first, second))).hasSize(2);
+    }
+
     private static ParsedTradeEvent event(long id, String messageKey, TradeEventType type) {
         var message = new InboxMessage(
                 id, Region.AMER, "idem-" + id, "topic", 0, id, messageKey,

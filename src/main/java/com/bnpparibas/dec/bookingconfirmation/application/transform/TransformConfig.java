@@ -16,12 +16,12 @@ public class TransformConfig {
     @Bean
     @ConditionalOnMissingBean
     public TradeEnricher noOpTradeEnricher() {
-        return (region, pivotPayload) -> pivotPayload;
+        return (region, event) -> event;
     }
 
     @Bean
     @ConditionalOnMissingBean
     public TradeFilter allowAllTradeFilter() {
-        return (region, pivotPayload) -> true;
+        return (region, event) -> true;
     }
 }

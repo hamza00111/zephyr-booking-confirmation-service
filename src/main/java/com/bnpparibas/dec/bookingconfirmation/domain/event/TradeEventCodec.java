@@ -1,14 +1,16 @@
 package com.bnpparibas.dec.bookingconfirmation.domain.event;
 
 import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
+import com.bnpparibas.dec.bookingconfirmation.domain.model.trade.TradeEvent;
 import java.util.Optional;
 
 /**
- * Port for the minimal TradeEvent payload introspection the PROCESS stage needs.
+ * Port for the TradeEvent payload handling the PROCESS stage needs: cheap introspection
+ * ({@link #eventType}, {@link #traceId}), the JSON-level type rewrite used by aggregation, and the
+ * typed {@link #deserialize}/{@link #serialize} round-trip that feeds the enrich/filter seam.
  *
- * <p>The payload is otherwise treated as an opaque string end-to-end — the typed TradeEvent model
- * lives in the producing system's repo and is deliberately not a dependency of this service (the
- * upcoming enrich/filter work may revisit that).
+ * <p>The typed view is the consumer-side envelope copy in {@code domain.model.trade}; the trade
+ * body itself stays an opaque, losslessly round-tripped node.
  */
 public interface TradeEventCodec {
 
@@ -33,4 +35,22 @@ public interface TradeEventCodec {
      * @return empty when the payload is unparseable or carries no {@code traceId}.
      */
     Optional<String> traceId(String payload);
+
+    /**
+     * Binds the payload to the typed envelope. Accepts both the current wire vocabulary
+     * ({@code TRADE_CREATED}…) and legacy forms; the returned event's concrete type follows the
+     * payload's discriminator.
+     *
+     * @throws TradeEventBindingException when the payload is unparseable, carries an unknown type,
+     *     or fails binding.
+     */
+    TradeEvent deserialize(String payload);
+
+    /**
+     * Serializes the typed envelope back to the wire JSON (discriminator in the current
+     * {@code TRADE_*} vocabulary; the opaque trade body round-trips unchanged).
+     *
+     * @throws TradeEventBindingException on serialization failure (a programming error in practice).
+     */
+    String serialize(TradeEvent event);
 }
