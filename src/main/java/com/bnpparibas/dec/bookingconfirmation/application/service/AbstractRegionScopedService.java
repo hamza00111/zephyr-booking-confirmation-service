@@ -28,11 +28,10 @@ public abstract class AbstractRegionScopedService implements BookingConfirmation
     private final OwnedPartitions ownedPartitions;
     protected final BookingConfirmationMetrics metrics;
 
-    protected AbstractRegionScopedService(
-            final Region region, final OwnedPartitions ownedPartitions, final BookingConfirmationMetrics metrics) {
-        this.region = region;
-        this.ownedPartitions = ownedPartitions;
-        this.metrics = metrics;
+    protected AbstractRegionScopedService(final RegionScope scope) {
+        this.region = scope.region();
+        this.ownedPartitions = scope.ownedPartitions();
+        this.metrics = scope.metrics();
     }
 
     @Override

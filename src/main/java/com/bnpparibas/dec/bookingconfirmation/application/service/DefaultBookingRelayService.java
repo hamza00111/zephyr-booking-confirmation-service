@@ -1,10 +1,7 @@
 package com.bnpparibas.dec.bookingconfirmation.application.service;
 
-import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
-import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.DomainEventPublisher;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingRelayService;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
@@ -37,15 +34,13 @@ public class DefaultBookingRelayService extends AbstractRegionScopedService impl
     private final TransactionTemplate transactionTemplate;
 
     public DefaultBookingRelayService(
-            final Region region,
-            final OwnedPartitions ownedPartitions,
+            final RegionScope scope,
             final int batchSize,
             final long sendAwaitTimeoutMs,
             final OutboxRepository outboxRepository,
             final DomainEventPublisher publisher,
-            final TransactionTemplate transactionTemplate,
-            final BookingConfirmationMetrics metrics) {
-        super(region, ownedPartitions, metrics);
+            final TransactionTemplate transactionTemplate) {
+        super(scope);
         this.batchSize = batchSize;
         this.sendAwaitTimeoutMs = sendAwaitTimeoutMs;
         this.outboxRepository = outboxRepository;

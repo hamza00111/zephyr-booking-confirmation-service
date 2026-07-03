@@ -5,7 +5,9 @@ import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirma
 import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
 import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.application.service.DefaultBookingProcessService;
+import com.bnpparibas.dec.bookingconfirmation.application.service.RegionScope;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEnricher;
+import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEventTransformer;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeFilter;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventCodec;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
@@ -55,17 +57,13 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
     @Override
     protected BookingProcessService buildService(final Region region, final RegionProperties regionProperties) {
         return new DefaultBookingProcessService(
-                region,
-                ownedPartitions,
+                new RegionScope(region, ownedPartitions, metrics),
                 properties().process().batchSize(),
-                regionProperties.publishedTopic(),
                 inboxRepository,
                 outboxRepository,
-                tradeEventCodec,
                 tradeEventAggregator,
-                tradeEnricher,
-                tradeFilter,
-                transactionTemplate,
-                metrics);
+                new TradeEventTransformer(
+                        region, regionProperties.publishedTopic(), tradeEventCodec, tradeEnricher, tradeFilter),
+                transactionTemplate);
     }
 }

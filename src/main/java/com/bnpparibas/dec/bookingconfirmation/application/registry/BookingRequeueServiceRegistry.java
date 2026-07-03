@@ -5,6 +5,7 @@ import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirma
 import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
 import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.application.service.DefaultBookingRequeueService;
+import com.bnpparibas.dec.bookingconfirmation.application.service.RegionScope;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
@@ -36,12 +37,10 @@ public class BookingRequeueServiceRegistry extends BaseRegionServiceRegistry<Boo
     @Override
     protected BookingRequeueService buildService(final Region region, final RegionProperties regionProperties) {
         return new DefaultBookingRequeueService(
-                region,
-                ownedPartitions,
+                new RegionScope(region, ownedPartitions, metrics),
                 properties().requeue().maxRetries(),
                 properties().requeue().processMaxRetries(),
                 outboxRepository,
-                inboxRepository,
-                metrics);
+                inboxRepository);
     }
 }

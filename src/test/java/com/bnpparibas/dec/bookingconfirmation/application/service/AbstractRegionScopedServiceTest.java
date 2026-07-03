@@ -69,7 +69,7 @@ class AbstractRegionScopedServiceTest {
                 final Region region,
                 final OwnedPartitions ownedPartitions,
                 final BookingConfirmationMetrics metrics) {
-            super(region, ownedPartitions, metrics);
+            super(new RegionScope(region, ownedPartitions, metrics));
         }
 
         @Override

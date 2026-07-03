@@ -1,8 +1,5 @@
 package com.bnpparibas.dec.bookingconfirmation.application.service;
 
-import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
-import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
-import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.RequeueOutcome;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
@@ -29,14 +26,12 @@ public class DefaultBookingRequeueService extends AbstractRegionScopedService im
     private final InboxRepository inboxRepository;
 
     public DefaultBookingRequeueService(
-            final Region region,
-            final OwnedPartitions ownedPartitions,
+            final RegionScope scope,
             final int maxRetries,
             final int processMaxRetries,
             final OutboxRepository outboxRepository,
-            final InboxRepository inboxRepository,
-            final BookingConfirmationMetrics metrics) {
-        super(region, ownedPartitions, metrics);
+            final InboxRepository inboxRepository) {
+        super(scope);
         this.maxRetries = maxRetries;
         this.processMaxRetries = processMaxRetries;
         this.outboxRepository = outboxRepository;

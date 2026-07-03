@@ -5,6 +5,7 @@ import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirma
 import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
 import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.application.service.DefaultBookingRelayService;
+import com.bnpparibas.dec.bookingconfirmation.application.service.RegionScope;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.DomainEventPublisher;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
@@ -48,13 +49,11 @@ public class BookingRelayServiceRegistry extends BaseRegionServiceRegistry<Booki
     protected BookingRelayService buildService(final Region region, final RegionProperties regionProperties) {
         breakerRegistry.register(region);
         return new DefaultBookingRelayService(
-                region,
-                ownedPartitions,
+                new RegionScope(region, ownedPartitions, metrics),
                 properties().relay().batchSize(),
                 properties().relay().sendAwaitTimeoutMs(),
                 outboxRepository,
                 publisher,
-                transactionTemplate,
-                metrics);
+                transactionTemplate);
     }
 }

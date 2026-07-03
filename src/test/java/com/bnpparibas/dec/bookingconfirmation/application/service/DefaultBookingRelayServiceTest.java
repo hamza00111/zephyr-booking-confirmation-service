@@ -129,8 +129,8 @@ class DefaultBookingRelayServiceTest {
     @Test
     void tick_shouldSkip_whenNoOwnedPartitions() {
         var service = new DefaultBookingRelayService(
-                Region.AMER, new OwnedPartitions(), 100, 200, outboxRepository, publisher, transactionTemplate(),
-                BookingConfirmationMetrics.noop());
+                new RegionScope(Region.AMER, new OwnedPartitions(), BookingConfirmationMetrics.noop()),
+                100, 200, outboxRepository, publisher, transactionTemplate());
 
         service.tick();
 
@@ -141,8 +141,8 @@ class DefaultBookingRelayServiceTest {
         ownedPartitions.add(Region.AMER, 0);
         // 200ms send-await deadline keeps the timeout test fast.
         return new DefaultBookingRelayService(
-                Region.AMER, ownedPartitions, 100, 200, outboxRepository, publisher, transactionTemplate(),
-                BookingConfirmationMetrics.noop());
+                new RegionScope(Region.AMER, ownedPartitions, BookingConfirmationMetrics.noop()),
+                100, 200, outboxRepository, publisher, transactionTemplate());
     }
 
     private static CallNotPermittedException notPermitted() {

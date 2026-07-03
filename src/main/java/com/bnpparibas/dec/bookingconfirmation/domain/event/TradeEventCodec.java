@@ -6,8 +6,8 @@ import java.util.Optional;
 
 /**
  * Port for the TradeEvent payload handling the PROCESS stage needs: cheap introspection
- * ({@link #eventType}, {@link #traceId}), the JSON-level type rewrite used by aggregation, and the
- * typed {@link #deserialize}/{@link #serialize} round-trip that feeds the enrich/filter seam.
+ * ({@link #eventType}, {@link #traceId}) and the typed {@link #deserialize}/{@link #serialize}
+ * round-trip that feeds the enrich/filter seam.
  *
  * <p>The typed view is the consumer-side envelope copy in {@code domain.model.trade}; the trade
  * body itself stays an opaque, losslessly round-tripped node.
@@ -23,12 +23,6 @@ public interface TradeEventCodec {
     Optional<TradeEventType> eventType(String payload);
 
     /**
-     * Returns the payload with its type discriminators rewritten to {@code target}. Used when a
-     * Created+Amended group collapses into a CREATED event carrying the amended payload.
-     */
-    String rewriteType(String payload, TradeEventType target);
-
-    /**
      * Reads the {@code traceId} correlation id from the event body (a top-level field the upstream
      * publisher stamps), used to correlate this service's logs across the decoupled pipeline.
      *
@@ -37,14 +31,16 @@ public interface TradeEventCodec {
     Optional<String> traceId(String payload);
 
     /**
-     * Binds the payload to the typed envelope. Accepts both the current wire vocabulary
-     * ({@code TRADE_CREATED}…) and legacy forms; the returned event's concrete type follows the
-     * payload's discriminator.
+     * Binds the payload to the typed envelope <em>as</em> the given type: the payload's own
+     * discriminator is overridden by {@code as} (a no-op when they already match), so aggregation
+     * can emit a group's survivor under the group's derived type — e.g. a Created+Amended group
+     * collapsing into a {@code TradeCreated} carrying the amended payload. The type was already
+     * resolved once by {@link #eventType} during classification; it is not re-resolved here.
      *
-     * @throws TradeEventBindingException when the payload is unparseable, carries an unknown type,
-     *     or fails binding.
+     * @throws TradeEventBindingException when the payload is unparseable, is not a JSON object, or
+     *     fails binding.
      */
-    TradeEvent deserialize(String payload);
+    TradeEvent deserialize(String payload, TradeEventType as);
 
     /**
      * Serializes the typed envelope back to the wire JSON (discriminator in the current

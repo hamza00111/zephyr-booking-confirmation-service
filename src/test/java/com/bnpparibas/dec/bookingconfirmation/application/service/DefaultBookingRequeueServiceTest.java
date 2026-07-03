@@ -31,8 +31,8 @@ class DefaultBookingRequeueServiceTest {
         var ownedPartitions = new OwnedPartitions();
         ownedPartitions.add(Region.AMER, 0);
         var service = new DefaultBookingRequeueService(
-                Region.AMER, ownedPartitions, 5, 3, outboxRepository, inboxRepository,
-                BookingConfirmationMetrics.noop());
+                new RegionScope(Region.AMER, ownedPartitions, BookingConfirmationMetrics.noop()),
+                5, 3, outboxRepository, inboxRepository);
         given(outboxRepository.requeueFailed(eq(Region.AMER), any(), eq(5))).willReturn(RequeueOutcome.NONE);
         given(inboxRepository.requeueFailed(eq(Region.AMER), any(), eq(3))).willReturn(RequeueOutcome.NONE);
 
@@ -45,8 +45,8 @@ class DefaultBookingRequeueServiceTest {
     @Test
     void tick_shouldSkip_whenNoOwnedPartitions() {
         var service = new DefaultBookingRequeueService(
-                Region.AMER, new OwnedPartitions(), 5, 3, outboxRepository, inboxRepository,
-                BookingConfirmationMetrics.noop());
+                new RegionScope(Region.AMER, new OwnedPartitions(), BookingConfirmationMetrics.noop()),
+                5, 3, outboxRepository, inboxRepository);
 
         service.tick();
 

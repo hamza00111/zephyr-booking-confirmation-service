@@ -23,8 +23,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>Wire format: {@code {"eventType":"TradeCreated",…}} — the {@code eventType} field carries
  * {@link TradeEventType#type()} and is also the polymorphic discriminator (see
- * {@link TradeEventsMixin}). The vocabulary is exactly the enum's wire strings; unknown values mark
- * the row INVALID ({@link #eventType}) or fail typed binding ({@link #deserialize}).
+ * {@link TradeEventsMixin}). The vocabulary is exactly the enum's wire strings; unknown values are
+ * caught once, at classification ({@link #eventType} → empty → row marked INVALID).
+ * {@link #deserialize} then binds under the caller-resolved type without re-resolving it.
  *
  * <p>Uses the dedicated {@code tradeEventJsonMapper}: payloads are foreign JSON, so the
  * application's serialization settings must not leak into them.
@@ -58,21 +59,6 @@ public class JacksonTradeEventCodec implements TradeEventCodec {
     }
 
     @Override
-    public String rewriteType(final String payload, final TradeEventType target) {
-        try {
-            final JsonNode root = jsonMapper.readTree(payload);
-            if (!(root instanceof ObjectNode event)) {
-                throw new IllegalStateException("TradeEvent payload is not a JSON object");
-            }
-            event.put(EVENT_TYPE_FIELD, target.type());
-            return jsonMapper.writeValueAsString(event);
-        } catch (final JsonProcessingException unparseable) {
-            // eventType() parsed this payload moments ago; reaching here is a programming error.
-            throw new IllegalStateException("Cannot rewrite TradeEvent type", unparseable);
-        }
-    }
-
-    @Override
     public Optional<String> traceId(final String payload) {
         try {
             return Optional.ofNullable(text(jsonMapper.readTree(payload), TRACE_ID_FIELD));
@@ -82,19 +68,19 @@ public class JacksonTradeEventCodec implements TradeEventCodec {
     }
 
     @Override
-    public TradeEvent deserialize(final String payload) {
+    public TradeEvent deserialize(final String payload, final TradeEventType as) {
         final JsonNode root;
         try {
             root = jsonMapper.readTree(payload);
         } catch (final JacksonException unparseable) {
             throw new TradeEventBindingException("TradeEvent payload is not valid JSON", unparseable);
         }
-        final TradeEventType type = resolveType(root)
-                .orElseThrow(() -> new TradeEventBindingException("TradeEvent payload carries no known event type"));
         if (!(root instanceof ObjectNode event)) {
             throw new TradeEventBindingException("TradeEvent payload is not a JSON object");
         }
-        event.put(EVENT_TYPE_FIELD, type.type());
+        // One parse, one stamp: the discriminator drives which subtype Jackson instantiates, so
+        // overriding it here is how aggregation retypes a survivor (records cannot change class).
+        event.put(EVENT_TYPE_FIELD, as.type());
         try {
             return jsonMapper.treeToValue(event, TradeEvent.class);
         } catch (final JacksonException bindingFailure) {

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
 import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEnricher;
+import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEventTransformer;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeFilter;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventBindingException;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventCodec;
@@ -58,7 +59,7 @@ class DefaultBookingProcessServiceTest {
         var service = processService();
         given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(inbox(1L, "K1")));
         given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.TRADE_CREATED));
-        given(tradeEventCodec.deserialize(PAYLOAD)).willReturn(EVENT);
+        given(tradeEventCodec.deserialize(PAYLOAD, TradeEventType.TRADE_CREATED)).willReturn(EVENT);
         given(tradeEventCodec.serialize(EVENT)).willReturn(SERIALIZED);
 
         service.tick();
@@ -95,7 +96,7 @@ class DefaultBookingProcessServiceTest {
         given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200)))
                 .willReturn(List.of(inbox(1L, "K1"), inbox(2L, "K1")));
         given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.TRADE_CREATED));
-        given(tradeEventCodec.deserialize(PAYLOAD)).willReturn(EVENT);
+        given(tradeEventCodec.deserialize(PAYLOAD, TradeEventType.TRADE_CREATED)).willReturn(EVENT);
 
         service.tick();
 
@@ -112,7 +113,7 @@ class DefaultBookingProcessServiceTest {
         given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200)))
                 .willReturn(List.of(inbox(1L, "K1"), inbox(2L, "K1")));
         given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.TRADE_CREATED));
-        given(tradeEventCodec.deserialize(PAYLOAD))
+        given(tradeEventCodec.deserialize(PAYLOAD, TradeEventType.TRADE_CREATED))
                 .willThrow(new TradeEventBindingException("envelope field has wrong shape"));
 
         service.tick();
@@ -127,7 +128,7 @@ class DefaultBookingProcessServiceTest {
         var service = processService((region, event) -> event, (region, event) -> false);
         given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(inbox(1L, "K1")));
         given(tradeEventCodec.eventType(PAYLOAD)).willReturn(Optional.of(TradeEventType.TRADE_CREATED));
-        given(tradeEventCodec.deserialize(PAYLOAD)).willReturn(EVENT);
+        given(tradeEventCodec.deserialize(PAYLOAD, TradeEventType.TRADE_CREATED)).willReturn(EVENT);
 
         service.tick();
 
@@ -151,15 +152,14 @@ class DefaultBookingProcessServiceTest {
     }
 
     @Test
-    void tick_shouldRewriteThenBindAndSerialize_whenSurvivorTypeDiffersFromEmittedType() {
+    void tick_shouldBindUnderEmittedType_whenSurvivorTypeDiffersFromEmittedType() {
         var service = processService();
         var created = inbox(1L, "K1", PAYLOAD);
         var amended = inbox(2L, "K1", "{\"eventType\":\"TradeAmended\"}");
         given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(created, amended));
         given(tradeEventCodec.eventType(created.rawPayload())).willReturn(Optional.of(TradeEventType.TRADE_CREATED));
         given(tradeEventCodec.eventType(amended.rawPayload())).willReturn(Optional.of(TradeEventType.TRADE_AMENDED));
-        given(tradeEventCodec.rewriteType(amended.rawPayload(), TradeEventType.TRADE_CREATED)).willReturn("{rewritten}");
-        given(tradeEventCodec.deserialize("{rewritten}")).willReturn(EVENT);
+        given(tradeEventCodec.deserialize(amended.rawPayload(), TradeEventType.TRADE_CREATED)).willReturn(EVENT);
         given(tradeEventCodec.serialize(EVENT)).willReturn(SERIALIZED);
 
         service.tick();
@@ -185,10 +185,13 @@ class DefaultBookingProcessServiceTest {
     @Test
     void tick_shouldSkip_whenNoOwnedPartitions() {
         var service = new DefaultBookingProcessService(
-                Region.AMER, new OwnedPartitions(), 200, "published",
-                inboxRepository, outboxRepository, tradeEventCodec, new BookingConfirmationTradeEventAggregator(),
-                (region, event) -> event, (region, event) -> true,
-                transactionTemplate(), BookingConfirmationMetrics.noop());
+                new RegionScope(Region.AMER, new OwnedPartitions(), BookingConfirmationMetrics.noop()),
+                200,
+                inboxRepository,
+                outboxRepository,
+                new BookingConfirmationTradeEventAggregator(),
+                transformer((region, event) -> event, (region, event) -> true),
+                transactionTemplate());
 
         service.tick();
 
@@ -202,10 +205,17 @@ class DefaultBookingProcessServiceTest {
     private DefaultBookingProcessService processService(final TradeEnricher enricher, final TradeFilter filter) {
         ownedPartitions.add(Region.AMER, 0);
         return new DefaultBookingProcessService(
-                Region.AMER, ownedPartitions, 200, "published",
-                inboxRepository, outboxRepository, tradeEventCodec, new BookingConfirmationTradeEventAggregator(),
-                enricher, filter,
-                transactionTemplate(), BookingConfirmationMetrics.noop());
+                new RegionScope(Region.AMER, ownedPartitions, BookingConfirmationMetrics.noop()),
+                200,
+                inboxRepository,
+                outboxRepository,
+                new BookingConfirmationTradeEventAggregator(),
+                transformer(enricher, filter),
+                transactionTemplate());
+    }
+
+    private TradeEventTransformer transformer(final TradeEnricher enricher, final TradeFilter filter) {
+        return new TradeEventTransformer(Region.AMER, "published", tradeEventCodec, enricher, filter);
     }
 
     private static InboxMessage inbox(long id, String messageKey) {
