@@ -51,7 +51,7 @@ class InboxIngestionServiceTest {
     void ingest_shouldUseHeaderIdempotencyKeyAndExtractTraceId_whenHeaderPresent() {
         given(tradeEventCodec.traceId("{}")).willReturn(Optional.of("t-1"));
         var record = new ConsumerRecord<>(TOPIC, 0, 7L, "GSS_1", "{}");
-        record.headers().add("cdc-idempotency-key", "idem-9".getBytes(UTF_8));
+        record.headers().add("idempotency-key", "idem-9".getBytes(UTF_8));
 
         service.ingest(record);
 
@@ -73,7 +73,7 @@ class InboxIngestionServiceTest {
     void ingest_shouldFallBackToTopicPartitionOffset_whenHeaderValueIsEmpty() {
         given(tradeEventCodec.traceId("{}")).willReturn(Optional.empty());
         var record = new ConsumerRecord<>(TOPIC, 0, 5L, "GSS_1", "{}");
-        record.headers().add("cdc-idempotency-key", new byte[0]);
+        record.headers().add("idempotency-key", new byte[0]);
 
         service.ingest(record);
 
@@ -84,7 +84,7 @@ class InboxIngestionServiceTest {
     void ingest_shouldFallBackToTopicPartitionOffset_whenHeaderValueIsWhitespaceOnly() {
         given(tradeEventCodec.traceId("{}")).willReturn(Optional.empty());
         var record = new ConsumerRecord<>(TOPIC, 0, 5L, "GSS_1", "{}");
-        record.headers().add("cdc-idempotency-key", "   ".getBytes(UTF_8));
+        record.headers().add("idempotency-key", "   ".getBytes(UTF_8));
 
         service.ingest(record);
 
@@ -104,7 +104,7 @@ class InboxIngestionServiceTest {
     void park_shouldInsertRowWithRootCauseErrorMessage() {
         given(tradeEventCodec.traceId("{}")).willReturn(Optional.of("t-1"));
         var record = new ConsumerRecord<>(TOPIC, 0, 7L, "GSS_1", "{}");
-        record.headers().add("cdc-idempotency-key", "idem-9".getBytes(UTF_8));
+        record.headers().add("idempotency-key", "idem-9".getBytes(UTF_8));
 
         service.park(record, new RuntimeException("listener wrapper", new IllegalStateException("db down")));
 
@@ -139,7 +139,7 @@ class InboxIngestionServiceTest {
     void park_shouldClampOversizedMetadataFields() {
         given(tradeEventCodec.traceId("{}")).willReturn(Optional.of("x".repeat(100)));
         var record = new ConsumerRecord<>(TOPIC, 0, 7L, "k".repeat(600), "{}");
-        record.headers().add("cdc-idempotency-key", "i".repeat(600).getBytes(UTF_8));
+        record.headers().add("idempotency-key", "i".repeat(600).getBytes(UTF_8));
 
         service.park(record, new RuntimeException("boom"));
 

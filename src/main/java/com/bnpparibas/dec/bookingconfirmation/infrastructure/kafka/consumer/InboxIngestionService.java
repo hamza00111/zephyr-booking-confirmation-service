@@ -24,7 +24,7 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class InboxIngestionService {
 
-    static final String INBOUND_IDEMPOTENCY_HEADER = "cdc-idempotency-key";
+    static final String INBOUND_IDEMPOTENCY_HEADER = "idempotency-key";
 
     private final InboxRepository inboxRepository;
     private final TopicRegionResolver topicRegionResolver;

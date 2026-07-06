@@ -34,8 +34,8 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class KafkaDomainEventPublisher implements DomainEventPublisher {
 
+    /** Same header name inbound and outbound: the upstream publisher stamps it, and so do we. */
     public static final String HEADER_IDEMPOTENCY_KEY = "idempotency-key";
-    private static final String INBOUND_IDEMPOTENCY_HEADER = "cdc-idempotency-key";
 
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final BookingConfirmationCircuitBreakerRegistry breakerRegistry;
@@ -107,9 +107,9 @@ public class KafkaDomainEventPublisher implements DomainEventPublisher {
     private ProducerRecord<String, String> buildRecord(final OutboxEvent event) {
         final ProducerRecord<String, String> record =
                 new ProducerRecord<>(event.destination(), null, event.messageKey(), event.payload());
-        // Re-emit the persisted inbound headers (minus the CDC-internal idempotency key, re-stamped below).
+        // Re-emit the persisted inbound headers (minus the inbound idempotency key, re-stamped below).
         KafkaHeaderCodec.fromJson(event.headers()).forEach((key, value) -> {
-            if (!INBOUND_IDEMPOTENCY_HEADER.equals(key)) {
+            if (!HEADER_IDEMPOTENCY_KEY.equals(key)) {
                 record.headers().add(key, value.getBytes(StandardCharsets.UTF_8));
             }
         });
