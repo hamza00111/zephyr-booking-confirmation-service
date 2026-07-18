@@ -1,22 +1,41 @@
 package com.bnpparibas.dec.bookingconfirmation.application.metrics;
 
+import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.INBOX_DUPLICATE;
+import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.INBOX_INGESTED;
+import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.INBOX_PARKED;
+import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.PARTITIONS_OWNED;
+import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.PROCESS_FAILED;
+import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.PROCESS_INVALID;
+import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.RELAY_FAILED;
+import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.RELAY_REJECTED;
+import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.RELAY_SENT;
+import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.REQUEUE_EXHAUSTED;
+import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.REQUEUE_PROMOTED;
+import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.TICK_ERRORS;
+
+import com.bnpparibas.dec.bookingconfirmation.common.metric.MetricsSupport;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
-import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.function.Supplier;
 
 /**
- * Central counter names for the pipeline, tagged {@code region} (and {@code stage} where relevant).
- * These are the alerting hooks for conditions that otherwise surface only as log lines: parked
- * ingestion failures, exhausted retry budgets, and ticks that fail every run.
+ * This module's tag conventions over the shared {@link MetricsSupport}: every meter is tagged
+ * {@code region} (and {@code stage} where relevant), with identities from
+ * {@link BookingConfirmationMetricType}. These are the alerting hooks for conditions that otherwise
+ * surface only as log lines: parked ingestion failures, exhausted retry budgets, and ticks that
+ * fail every run.
  */
 public final class BookingConfirmationMetrics {
 
-    private final MeterRegistry registry;
+    private static final String REGION_TAG = "region";
+    private static final String STAGE_TAG = "stage";
+
+    private final MetricsSupport support;
 
     public BookingConfirmationMetrics(final MeterRegistry registry) {
-        this.registry = registry;
+        this.support = new MetricsSupport(registry);
     }
 
     /** In-memory registry for tests and contexts without a backing registry. */
@@ -25,50 +44,50 @@ public final class BookingConfirmationMetrics {
     }
 
     public void inboxIngested(final Region region) {
-        count("bc.inbox.ingested", region, 1);
+        count(INBOX_INGESTED, region, 1);
     }
 
     public void inboxDuplicate(final Region region) {
-        count("bc.inbox.duplicate", region, 1);
+        count(INBOX_DUPLICATE, region, 1);
     }
 
     /** A record the consumer error handler parked as INGEST_FAILURE — page-worthy if sustained. */
     public void inboxParked(final Region region) {
-        count("bc.inbox.parked", region, 1);
+        count(INBOX_PARKED, region, 1);
     }
 
     public void processInvalid(final Region region, final int count) {
-        count("bc.process.invalid", region, count);
+        count(PROCESS_INVALID, region, count);
     }
 
     public void processFailed(final Region region, final int count) {
-        count("bc.process.failed", region, count);
+        count(PROCESS_FAILED, region, count);
     }
 
     public void relaySent(final Region region, final int count) {
-        count("bc.relay.sent", region, count);
+        count(RELAY_SENT, region, count);
     }
 
     public void relayFailed(final Region region, final int count) {
-        count("bc.relay.failed", region, count);
+        count(RELAY_FAILED, region, count);
     }
 
     public void relayRejected(final Region region, final int count) {
-        count("bc.relay.rejected", region, count);
+        count(RELAY_REJECTED, region, count);
     }
 
     public void requeuePromoted(final Region region, final String stage, final int count) {
-        countWithStage("bc.requeue.promoted", region, stage, count);
+        countWithStage(REQUEUE_PROMOTED, region, stage, count);
     }
 
     /** Rows that ran out of retry budget (RETRY_EXHAUSTED / INVALID) — the primary alerting hook. */
     public void requeueExhausted(final Region region, final String stage, final int count) {
-        countWithStage("bc.requeue.exhausted", region, stage, count);
+        countWithStage(REQUEUE_EXHAUSTED, region, stage, count);
     }
 
     /** A scheduled tick threw — persistent increments mean a stage is failing every run. */
     public void tickError(final Region region, final String stage) {
-        countWithStage("bc.tick.errors", region, stage, 1);
+        countWithStage(TICK_ERRORS, region, stage, 1);
     }
 
     /**
@@ -77,21 +96,23 @@ public final class BookingConfirmationMetrics {
      * partition-scoped, so an instance kicked from the consumer group silently skips all of them.
      */
     public void ownedPartitionsGauge(final Region region, final Supplier<Number> size) {
-        Gauge.builder("bc.partitions.owned", size)
-                .tag("region", region.name())
-                .description("Partitions of the region's internal topic owned by this instance")
-                .register(registry);
+        support.gauge(PARTITIONS_OWNED, size, Tag.of(REGION_TAG, region.name()));
     }
 
-    private void count(final String name, final Region region, final int amount) {
+    private void count(final BookingConfirmationMetricType metric, final Region region, final int amount) {
         if (amount > 0) {
-            registry.counter(name, "region", region.name()).increment(amount);
+            support.counter(metric).tag(REGION_TAG, region.name()).register().increment(amount);
         }
     }
 
-    private void countWithStage(final String name, final Region region, final String stage, final int amount) {
+    private void countWithStage(
+            final BookingConfirmationMetricType metric, final Region region, final String stage, final int amount) {
         if (amount > 0) {
-            registry.counter(name, "region", region.name(), "stage", stage).increment(amount);
+            support.counter(metric)
+                    .tag(REGION_TAG, region.name())
+                    .tag(STAGE_TAG, stage)
+                    .register()
+                    .increment(amount);
         }
     }
 }
