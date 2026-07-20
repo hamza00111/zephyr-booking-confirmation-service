@@ -1,4 +1,4 @@
-package com.bnpparibas.dec.bookingconfirmation.common.metric;
+package com.bnpparibas.dec.bookingconfirmation.common.infrastructure.metric;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

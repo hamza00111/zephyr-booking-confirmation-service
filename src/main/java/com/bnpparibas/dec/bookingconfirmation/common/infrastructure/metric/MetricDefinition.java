@@ -1,4 +1,4 @@
-package com.bnpparibas.dec.bookingconfirmation.common.metric;
+package com.bnpparibas.dec.bookingconfirmation.common.infrastructure.metric;
 
 /**
  * A module-defined metric identity: the Micrometer meter name ({@link #getKey()}) and its

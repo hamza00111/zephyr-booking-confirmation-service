@@ -1,6 +1,6 @@
 package com.bnpparibas.dec.bookingconfirmation.application.metrics;
 
-import com.bnpparibas.dec.bookingconfirmation.common.metric.MetricDefinition;
+import com.bnpparibas.dec.bookingconfirmation.common.infrastructure.metric.MetricDefinition;
 
 /**
  * This module's metric catalogue (the processor-side counterpart of the publisher's

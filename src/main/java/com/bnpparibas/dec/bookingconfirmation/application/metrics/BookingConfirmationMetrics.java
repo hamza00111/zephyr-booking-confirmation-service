@@ -13,7 +13,7 @@ import static com.bnpparibas.dec.bookingconfirmation.application.metrics.Booking
 import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.REQUEUE_PROMOTED;
 import static com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetricType.TICK_ERRORS;
 
-import com.bnpparibas.dec.bookingconfirmation.common.metric.MetricsSupport;
+import com.bnpparibas.dec.bookingconfirmation.common.infrastructure.metric.MetricsSupport;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
@@ -34,8 +34,13 @@ public final class BookingConfirmationMetrics {
 
     private final MetricsSupport support;
 
+    /** Composition over the shared support — the bean the common module provides. */
+    public BookingConfirmationMetrics(final MetricsSupport support) {
+        this.support = support;
+    }
+
     public BookingConfirmationMetrics(final MeterRegistry registry) {
-        this.support = new MetricsSupport(registry);
+        this(new MetricsSupport(registry));
     }
 
     /** In-memory registry for tests and contexts without a backing registry. */
