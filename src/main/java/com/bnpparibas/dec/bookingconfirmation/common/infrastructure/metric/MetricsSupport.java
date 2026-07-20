@@ -69,12 +69,21 @@ public class MetricsSupport {
      */
     public <E extends Enum<E>> StatusGauges<E> statusGauges(
             final MetricDefinition metric, final Class<E> statusType, final String statusTag, final Tag... fixedTags) {
+        return statusGauges(metric.getKey(), metric.getDescription(), statusType, statusTag, fixedTags);
+    }
+
+    public <E extends Enum<E>> StatusGauges<E> statusGauges(
+            final String name,
+            final String description,
+            final Class<E> statusType,
+            final String statusTag,
+            final Tag... fixedTags) {
         final Map<E, AtomicLong> holders = new EnumMap<>(statusType);
         for (final E status : statusType.getEnumConstants()) {
             final AtomicLong holder = new AtomicLong(0L);
             holders.put(status, holder);
-            Gauge.builder(metric.getKey(), holder, AtomicLong::get)
-                    .description(metric.getDescription())
+            Gauge.builder(name, holder, AtomicLong::get)
+                    .description(description)
                     .tags(List.of(fixedTags))
                     .tag(statusTag, status.name())
                     .register(registry);
