@@ -1,6 +1,8 @@
 package com.bnpparibas.dec.bookingconfirmation.infrastructure.scheduler;
 
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties;
+import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
+import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.application.registry.BookingProcessServiceRegistry;
 import com.bnpparibas.dec.bookingconfirmation.application.registry.BookingRelayServiceRegistry;
 import com.bnpparibas.dec.bookingconfirmation.application.registry.BookingRequeueServiceRegistry;
@@ -35,6 +37,8 @@ public class BookingConfirmationSchedulerInitializer implements ApplicationRunne
     private final BookingRequeueServiceRegistry requeueRegistry;
     private final BookingConfirmationProperties properties;
     private final ThreadPoolTaskScheduler scheduler;
+    private final OwnedPartitions ownedPartitions;
+    private final BookingConfirmationMetrics metrics;
     private final List<ScheduledFuture<?>> scheduledFutures = new ArrayList<>();
 
     public BookingConfirmationSchedulerInitializer(
@@ -42,12 +46,16 @@ public class BookingConfirmationSchedulerInitializer implements ApplicationRunne
             final BookingRelayServiceRegistry relayRegistry,
             final BookingRequeueServiceRegistry requeueRegistry,
             final BookingConfirmationProperties properties,
-            @Qualifier("bookingConfirmationScheduler") final ThreadPoolTaskScheduler scheduler) {
+            @Qualifier("bookingConfirmationScheduler") final ThreadPoolTaskScheduler scheduler,
+            final OwnedPartitions ownedPartitions,
+            final BookingConfirmationMetrics metrics) {
         this.processRegistry = processRegistry;
         this.relayRegistry = relayRegistry;
         this.requeueRegistry = requeueRegistry;
         this.properties = properties;
         this.scheduler = scheduler;
+        this.ownedPartitions = ownedPartitions;
+        this.metrics = metrics;
     }
 
     @Override
@@ -64,6 +72,8 @@ public class BookingConfirmationSchedulerInitializer implements ApplicationRunne
             schedule(processRegistry.service(region), processMs);
             schedule(relayRegistry.service(region), relayMs);
             schedule(requeueRegistry.service(region), requeueMs);
+            // Zero while failure rows accumulate = the drains are silently skipping (ADR 0001).
+            metrics.ownedPartitionsGauge(region, () -> ownedPartitions.forRegion(region).size());
         }
         log.info("Scheduled {} task(s) across {} active region(s)",
                 scheduledFutures.size(), properties.activeRegions().size());

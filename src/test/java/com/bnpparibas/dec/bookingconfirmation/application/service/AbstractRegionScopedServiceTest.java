@@ -3,9 +3,11 @@ package com.bnpparibas.dec.bookingconfirmation.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
+import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
 import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.ProcessType;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -15,7 +17,7 @@ class AbstractRegionScopedServiceTest {
 
     @Test
     void region_andProcessIdentifier_areExposed() {
-        var service = new TestService(Region.EMEA, ownedPartitions);
+        var service = new TestService(Region.EMEA, ownedPartitions, BookingConfirmationMetrics.noop());
 
         assertThat(service.region()).isEqualTo(Region.EMEA);
         assertThat(service.processIdentifier()).isEqualTo("EMEA.PROCESS");
@@ -23,7 +25,7 @@ class AbstractRegionScopedServiceTest {
 
     @Test
     void tick_skips_whenNoOwnedPartitions() {
-        var service = new TestService(Region.EMEA, ownedPartitions);
+        var service = new TestService(Region.EMEA, ownedPartitions, BookingConfirmationMetrics.noop());
 
         service.tick();
 
@@ -34,7 +36,7 @@ class AbstractRegionScopedServiceTest {
     void tick_runsDoTick_withTheOwnedPartitions() {
         ownedPartitions.add(Region.EMEA, 3);
         ownedPartitions.add(Region.EMEA, 7);
-        var service = new TestService(Region.EMEA, ownedPartitions);
+        var service = new TestService(Region.EMEA, ownedPartitions, BookingConfirmationMetrics.noop());
 
         service.tick();
 
@@ -43,12 +45,17 @@ class AbstractRegionScopedServiceTest {
     }
 
     @Test
-    void tick_containsExceptionsFromDoTick() {
+    void tick_containsExceptionsFromDoTick_andCountsThem() {
         ownedPartitions.add(Region.EMEA, 3);
-        var service = new TestService(Region.EMEA, ownedPartitions);
+        var meterRegistry = new SimpleMeterRegistry();
+        var service = new TestService(Region.EMEA, ownedPartitions, new BookingConfirmationMetrics(meterRegistry));
         service.toThrow = new RuntimeException("boom");
 
         assertThatCode(service::tick).doesNotThrowAnyException();
+        assertThat(meterRegistry
+                        .counter("bc.tick.errors", "region", "EMEA", "stage", "PROCESS")
+                        .count())
+                .isEqualTo(1.0);
     }
 
     /** Minimal concrete stage to exercise the base class. */
@@ -58,8 +65,11 @@ class AbstractRegionScopedServiceTest {
         private Set<Integer> received;
         private RuntimeException toThrow;
 
-        private TestService(final Region region, final OwnedPartitions ownedPartitions) {
-            super(region, ownedPartitions);
+        private TestService(
+                final Region region,
+                final OwnedPartitions ownedPartitions,
+                final BookingConfirmationMetrics metrics) {
+            super(new RegionScope(region, ownedPartitions, metrics));
         }
 
         @Override

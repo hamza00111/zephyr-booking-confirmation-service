@@ -16,12 +16,12 @@ class KafkaHeaderCodecTest {
 
     @Test
     void toJson_shouldSerializeHeaders_asUtf8StringMap() {
-        Headers headers = headers(Map.of("cdc-idempotency-key", "idem-1", "x-correlation-id", "abc"));
+        Headers headers = headers(Map.of("idempotency-key", "idem-1", "x-correlation-id", "abc"));
 
         String json = KafkaHeaderCodec.toJson(headers);
 
         assertThat(KafkaHeaderCodec.fromJson(json))
-                .containsEntry("cdc-idempotency-key", "idem-1")
+                .containsEntry("idempotency-key", "idem-1")
                 .containsEntry("x-correlation-id", "abc");
     }
 

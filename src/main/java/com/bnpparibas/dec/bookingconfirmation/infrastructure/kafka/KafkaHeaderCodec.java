@@ -21,6 +21,7 @@ import org.jspecify.annotations.Nullable;
  */
 public final class KafkaHeaderCodec {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(KafkaHeaderCodec.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private KafkaHeaderCodec() {}
@@ -39,6 +40,7 @@ public final class KafkaHeaderCodec {
         try {
             return MAPPER.writeValueAsString(map);
         } catch (final JsonProcessingException unexpected) {
+            log.warn("Failed to serialize {} Kafka header(s) to JSON — headers will not propagate", map.size(), unexpected);
             return null;
         }
     }
@@ -51,6 +53,7 @@ public final class KafkaHeaderCodec {
         try {
             return MAPPER.readValue(json, new TypeReference<LinkedHashMap<String, String>>() {});
         } catch (final JsonProcessingException unparseable) {
+            log.warn("Failed to parse stored HEADERS JSON — re-emitting without inbound headers", unparseable);
             return Map.of();
         }
     }

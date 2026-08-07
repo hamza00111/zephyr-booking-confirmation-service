@@ -12,16 +12,24 @@ package com.bnpparibas.dec.bookingconfirmation.domain.model;
  *   │
  *   └──[transform fails]─► PROCESS_FAILURE (retryable transform/processing failure)
  *                              │
- *                              └─────────► INVALID (terminal — un-transformable payload)
+ *                              ├──[REQUEUE tick, budget left]──► NEW
+ *                              └──[REQUEUE tick, exhausted]───► INVALID (terminal)
+ *
+ * INGEST_FAILURE ──[REQUEUE tick]──► NEW | INVALID   (parked by the consumer error handler after
+ *                                                     ingestion retries were exhausted; same budget
+ *                                                     rules as PROCESS_FAILURE)
  * </pre>
  *
  * <p>{@code PROCESS_FAILURE} is the analogue of the publisher's {@code MAPPING_ERROR}: it names a
  * transform failure, not a Kafka send failure (sends happen in the outbox/RELAY stage).
+ * {@code INGEST_FAILURE} is the DB-side dead-letter parking for records the consumer could not
+ * ingest normally — the raw payload is preserved so nothing is lost when the offset advances.
  */
 public enum InboxStatus {
     NEW,
     PROCESSED,
     AGGREGATED,
     PROCESS_FAILURE,
+    INGEST_FAILURE,
     INVALID
 }

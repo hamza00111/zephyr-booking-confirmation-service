@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties.RegionProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties.RelayProperties;
+import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
 import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.DomainEventPublisher;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
@@ -24,7 +25,7 @@ class BookingRelayServiceRegistryTest {
                 null,
                 null,
                 null,
-                new RelayProperties(3000, 100),
+                new RelayProperties(3000, 100, 20000),
                 null,
                 null);
         var registry = new BookingRelayServiceRegistry(
@@ -33,7 +34,8 @@ class BookingRelayServiceRegistryTest {
                 mock(DomainEventPublisher.class),
                 mock(BookingConfirmationCircuitBreakerRegistry.class),
                 mock(TransactionTemplate.class),
-                new OwnedPartitions());
+                new OwnedPartitions(),
+                BookingConfirmationMetrics.noop());
 
         registry.initialize();
 

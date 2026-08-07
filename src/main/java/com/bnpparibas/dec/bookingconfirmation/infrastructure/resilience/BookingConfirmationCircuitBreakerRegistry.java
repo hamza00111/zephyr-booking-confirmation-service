@@ -7,6 +7,8 @@ import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.micrometer.tagged.TaggedCircuitBreakerMetrics;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,8 +28,12 @@ public class BookingConfirmationCircuitBreakerRegistry {
     private final CircuitBreakerRegistry r4jRegistry = CircuitBreakerRegistry.ofDefaults();
     private final Map<Region, CircuitBreaker> relayBreakers = new ConcurrentHashMap<>();
 
-    public BookingConfirmationCircuitBreakerRegistry(final BookingConfirmationProperties properties) {
+    public BookingConfirmationCircuitBreakerRegistry(
+            final BookingConfirmationProperties properties, final MeterRegistry meterRegistry) {
         this.props = properties.resilience();
+        // Expose breaker state/calls/failure-rate as resilience4j.circuitbreaker.* gauges, tagged by
+        // breaker name (<REGION>.RELAY) — an OPEN breaker becomes visible without log archaeology.
+        TaggedCircuitBreakerMetrics.ofCircuitBreakerRegistry(r4jRegistry).bindTo(meterRegistry);
     }
 
     /** Idempotently registers the relay breaker for a region. */

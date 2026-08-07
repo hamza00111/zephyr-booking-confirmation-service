@@ -1,5 +1,6 @@
 package com.bnpparibas.dec.bookingconfirmation.domain.model;
 
+import java.util.Objects;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -20,4 +21,12 @@ public record InboxMessage(
         @Nullable String messageKey,
         String rawPayload,
         @Nullable String traceId,
-        @Nullable String headers) {}
+        @Nullable String headers) {
+
+    public InboxMessage {
+        Objects.requireNonNull(region, "region");
+        Objects.requireNonNull(idempotencyKey, "idempotencyKey");
+        Objects.requireNonNull(sourceTopic, "sourceTopic");
+        Objects.requireNonNull(rawPayload, "rawPayload");
+    }
+}

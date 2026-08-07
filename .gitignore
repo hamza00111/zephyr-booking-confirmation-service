@@ -43,3 +43,4 @@ application-*-secret.yaml
 *.p12
 *.pem
 *.key
+__pycache__/

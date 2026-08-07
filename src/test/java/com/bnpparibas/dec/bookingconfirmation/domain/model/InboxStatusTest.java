@@ -14,6 +14,7 @@ class InboxStatusTest {
                         InboxStatus.PROCESSED,
                         InboxStatus.AGGREGATED,
                         InboxStatus.PROCESS_FAILURE,
+                        InboxStatus.INGEST_FAILURE,
                         InboxStatus.INVALID);
     }
 

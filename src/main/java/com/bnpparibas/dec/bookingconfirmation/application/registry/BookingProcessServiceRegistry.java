@@ -2,16 +2,19 @@ package com.bnpparibas.dec.bookingconfirmation.application.registry;
 
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties.RegionProperties;
+import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
 import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.application.service.DefaultBookingProcessService;
+import com.bnpparibas.dec.bookingconfirmation.application.service.RegionScope;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEnricher;
+import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEventTransformer;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeFilter;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventCodec;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.OutboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingProcessService;
-import com.bnpparibas.dec.bookingconfirmation.domain.service.TradeEventAggregator;
+import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingConfirmationTradeEventAggregator;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -23,11 +26,12 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
     private final OutboxRepository outboxRepository;
     private final TradeEventCodec tradeEventCodec;
     // Pure, stateless domain logic — instantiated here rather than Spring-managed.
-    private final TradeEventAggregator tradeEventAggregator = new TradeEventAggregator();
+    private final BookingConfirmationTradeEventAggregator tradeEventAggregator = new BookingConfirmationTradeEventAggregator();
     private final TradeEnricher tradeEnricher;
     private final TradeFilter tradeFilter;
     private final TransactionTemplate transactionTemplate;
     private final OwnedPartitions ownedPartitions;
+    private final BookingConfirmationMetrics metrics;
 
     public BookingProcessServiceRegistry(
             final BookingConfirmationProperties properties,
@@ -37,7 +41,8 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
             final TradeEnricher tradeEnricher,
             final TradeFilter tradeFilter,
             final TransactionTemplate transactionTemplate,
-            final OwnedPartitions ownedPartitions) {
+            final OwnedPartitions ownedPartitions,
+            final BookingConfirmationMetrics metrics) {
         super(properties);
         this.inboxRepository = inboxRepository;
         this.outboxRepository = outboxRepository;
@@ -46,21 +51,19 @@ public class BookingProcessServiceRegistry extends BaseRegionServiceRegistry<Boo
         this.tradeFilter = tradeFilter;
         this.transactionTemplate = transactionTemplate;
         this.ownedPartitions = ownedPartitions;
+        this.metrics = metrics;
     }
 
     @Override
     protected BookingProcessService buildService(final Region region, final RegionProperties regionProperties) {
         return new DefaultBookingProcessService(
-                region,
-                ownedPartitions,
+                new RegionScope(region, ownedPartitions, metrics),
                 properties().process().batchSize(),
-                regionProperties.publishedTopic(),
                 inboxRepository,
                 outboxRepository,
-                tradeEventCodec,
                 tradeEventAggregator,
-                tradeEnricher,
-                tradeFilter,
+                new TradeEventTransformer(
+                        region, regionProperties.publishedTopic(), tradeEventCodec, tradeEnricher, tradeFilter),
                 transactionTemplate);
     }
 }

@@ -9,10 +9,10 @@ class ParsedTradeEventTest {
     @Test
     void id_delegatesToMessage_andAccessorsHold() {
         var message = new InboxMessage(5L, Region.AMER, "idem", "topic", 0, 0L, "key", "raw", "trace", null);
-        var parsed = new ParsedTradeEvent(message, TradeEventType.CREATED);
+        var parsed = new ParsedTradeEvent(message, TradeEventType.TRADE_CREATED);
 
         assertThat(parsed.id()).isEqualTo(5L);
-        assertThat(parsed.type()).isEqualTo(TradeEventType.CREATED);
+        assertThat(parsed.eventType()).isEqualTo(TradeEventType.TRADE_CREATED);
         assertThat(parsed.message()).isSameAs(message);
     }
 }

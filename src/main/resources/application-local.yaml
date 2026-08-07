@@ -15,9 +15,10 @@
 spring:
   datasource:
     # Oracle service-name form: //host:port/<PDB service name>
-    url: jdbc:oracle:thin:@//localhost:1521/zephyr_pdb
-    username: ZEPHYR
-    password: Zephyr_123
+    url: ${ZEPHYR_DB_URL:jdbc:oracle:thin:@//localhost:1521/zephyr_pdb}
+    username: ${ZEPHYR_DB_USERNAME:ZEPHYR}
+    # Local-container throwaway default; override via env even locally if your container differs.
+    password: ${ZEPHYR_DB_PASSWORD:Zephyr_123}
     hikari:
       maximum-pool-size: 10
       minimum-idle: 1
@@ -38,6 +39,11 @@ logging:
   level:
     com.bnpparibas.dec.bookingconfirmation: DEBUG
     org.apache.kafka.clients: WARN
+
+# Swagger is disabled by default in the base config; local runs want it.
+springdoc:
+  swagger-ui:
+    enabled: true
 
 # If your local broker only has the AMER topics, silence unknown-topic noise by
 # disabling the other regions (uncomment):

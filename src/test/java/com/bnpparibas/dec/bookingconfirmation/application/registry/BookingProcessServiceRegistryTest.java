@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties.ProcessProperties;
 import com.bnpparibas.dec.bookingconfirmation.application.config.BookingConfirmationProperties.RegionProperties;
+import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
 import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEnricher;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeFilter;
@@ -37,7 +38,8 @@ class BookingProcessServiceRegistryTest {
                 mock(TradeEnricher.class),
                 mock(TradeFilter.class),
                 mock(TransactionTemplate.class),
-                new OwnedPartitions());
+                new OwnedPartitions(),
+                BookingConfirmationMetrics.noop());
 
         registry.initialize();
 

@@ -1,5 +1,6 @@
 package com.bnpparibas.dec.bookingconfirmation.domain.model;
 
+import java.util.Objects;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -23,4 +24,12 @@ public record OutboxEvent(
         String payload,
         @Nullable Long inboxId,
         @Nullable String traceId,
-        @Nullable String headers) {}
+        @Nullable String headers) {
+
+    public OutboxEvent {
+        Objects.requireNonNull(region, "region");
+        Objects.requireNonNull(idempotencyKey, "idempotencyKey");
+        Objects.requireNonNull(destination, "destination");
+        Objects.requireNonNull(payload, "payload");
+    }
+}

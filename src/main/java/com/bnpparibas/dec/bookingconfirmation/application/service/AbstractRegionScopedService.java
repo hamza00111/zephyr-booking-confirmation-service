@@ -1,5 +1,6 @@
 package com.bnpparibas.dec.bookingconfirmation.application.service;
 
+import com.bnpparibas.dec.bookingconfirmation.application.metrics.BookingConfirmationMetrics;
 import com.bnpparibas.dec.bookingconfirmation.application.partition.OwnedPartitions;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.service.BookingConfirmationService;
@@ -25,10 +26,12 @@ public abstract class AbstractRegionScopedService implements BookingConfirmation
 
     private final Region region;
     private final OwnedPartitions ownedPartitions;
+    protected final BookingConfirmationMetrics metrics;
 
-    protected AbstractRegionScopedService(final Region region, final OwnedPartitions ownedPartitions) {
-        this.region = region;
-        this.ownedPartitions = ownedPartitions;
+    protected AbstractRegionScopedService(final RegionScope scope) {
+        this.region = scope.region();
+        this.ownedPartitions = scope.ownedPartitions();
+        this.metrics = scope.metrics();
     }
 
     @Override
@@ -45,11 +48,16 @@ public abstract class AbstractRegionScopedService implements BookingConfirmation
     public final void tick() {
         final Set<Integer> owned = ownedPartitions.forRegion(region);
         if (owned.isEmpty()) {
-            return; // this instance currently owns no partitions of this region — nothing to drain
+            // Nothing to drain — but if failures are piling up while this line repeats (or the
+            // bc.partitions.owned gauge sits at 0), the consumer has lost its partitions and rows
+            // are stuck until it rejoins the group.
+            log.debug("[{}] Owns no partitions — skipping tick", processIdentifier());
+            return;
         }
         try {
             doTick(owned);
         } catch (final RuntimeException exception) {
+            metrics.tickError(region, processType().name());
             log.error("[{}] Tick failed", processIdentifier(), exception);
         }
     }
