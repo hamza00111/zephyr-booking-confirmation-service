@@ -116,6 +116,7 @@ public final class TradeEventLoadProducer {
                     header(record, "firm", firm);
                     header(record, "hub", hub);
                     header(record, "booking-confirmation-id", String.valueOf(sequence));
+                    header(record, "correlationId", "00-" + UUID.randomUUID() + "-loadtest");
                     producer.send(record);
                     switch (eventType) {
                         case "TradeCreated" -> created++;
