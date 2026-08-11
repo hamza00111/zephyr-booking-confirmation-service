@@ -37,7 +37,14 @@ import org.apache.kafka.common.serialization.StringSerializer;
  * local.booking.trade.internal.amer}, {@code --trades 100}, {@code --events-per-trade 5},
  * {@code --delete-last} (append a trailing TradeDeleted per trade), {@code --rate N} (events/s,
  * 0 = full speed), {@code --base-trade-id 444071454}, {@code --firm KOP}, {@code --hub US},
- * {@code --source-id KOP}.
+ * {@code --source-id KOP}, {@code --payload-file event.json}.
+ *
+ * <p>{@code --payload-file} makes generated events immune to model drift: dump ONE real event
+ * from AKHQ/the Confluent panel into a file and pass it here. The file is used as the template
+ * for every message; only identity/variance fields are overridden per message (eventType,
+ * eventId, traceId, pivotId.id, external trade-id references, occurredAt/recordedAt,
+ * payload.tradeUpdateDateTime, payload.notional) and each override is skipped when the template
+ * lacks that node — whatever the consuming model requires, the template already satisfies.
  *
  * <p>Aggregation math (also printed after the run): the PROCESS stage groups per message key
  * <em>within one drained batch</em> (batch-size 200, tick 3s). Created+Deleted → nothing; Created
@@ -59,6 +66,8 @@ public final class TradeEventLoadProducer {
     private String firm = "KOP";
     private String hub = "US";
     private String sourceId = "KOP";
+    private String payloadFile = null;
+    private ObjectNode payloadTemplate = null;
 
     public static void main(final String[] args) throws Exception {
         final TradeEventLoadProducer loadProducer = new TradeEventLoadProducer();
@@ -79,12 +88,18 @@ public final class TradeEventLoadProducer {
                 case "--firm" -> firm = args[++i];
                 case "--hub" -> hub = args[++i];
                 case "--source-id" -> sourceId = args[++i];
+                case "--payload-file" -> payloadFile = args[++i];
                 default -> throw new IllegalArgumentException("Unknown arg: " + args[i]);
             }
         }
     }
 
-    private void run() throws InterruptedException {
+    private void run() throws InterruptedException, java.io.IOException {
+        if (payloadFile != null) {
+            payloadTemplate = (ObjectNode) MAPPER.readTree(java.nio.file.Files.readString(
+                    java.nio.file.Path.of(payloadFile), StandardCharsets.UTF_8));
+            System.out.println("Using payload template: " + payloadFile);
+        }
         final Properties props = new Properties();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
@@ -154,6 +169,56 @@ public final class TradeEventLoadProducer {
 
     /** One full envelope; amendments bump tradeUpdateDateTime and notional. */
     private String event(final String eventType, final String tradeId, final int amendmentIndex, final Instant now) {
+        if (payloadTemplate != null) {
+            return eventFromTemplate(eventType, tradeId, amendmentIndex, now);
+        }
+        return builtInEvent(eventType, tradeId, amendmentIndex, now);
+    }
+
+    /**
+     * Deep-copies the real-event template and overrides only identity/variance fields — every
+     * override is conditional on the node existing, so the template's shape is never distorted.
+     */
+    private String eventFromTemplate(
+            final String eventType, final String tradeId, final int amendmentIndex, final Instant now) {
+        final ObjectNode root = payloadTemplate.deepCopy();
+        root.put("eventType", eventType);
+        if (root.has("eventId")) {
+            root.put("eventId", UUID.randomUUID().toString());
+        }
+        if (root.has("traceId")) {
+            root.put("traceId", UUID.randomUUID().toString());
+        }
+        if (root.path("pivotId").isObject()) {
+            ((ObjectNode) root.get("pivotId")).put("id", tradeId);
+        }
+        if (root.has("occurredAt")) {
+            root.put("occurredAt", now.toString());
+        }
+        if (root.has("recordedAt")) {
+            root.put("recordedAt", now.toString());
+        }
+        if (root.path("payload").isObject()) {
+            final ObjectNode payload = (ObjectNode) root.get("payload");
+            if (payload.path("externalSystemTradeId").isObject()) {
+                ((ObjectNode) payload.get("externalSystemTradeId")).put("id", tradeId);
+            }
+            if (payload.path("references").isObject()) {
+                ((ObjectNode) payload.get("references")).put("externalSystemTradeId", tradeId);
+            }
+            if (payload.has("tradeUpdateDateTime")) {
+                payload.put("tradeUpdateDateTime", LocalDateTime.ofInstant(
+                        now.plusSeconds(amendmentIndex), ZoneOffset.UTC).withNano(0).toString());
+            }
+            if (payload.has("notional")) {
+                payload.put("notional", 1_000_000 + amendmentIndex);
+            }
+        }
+        return root.toString();
+    }
+
+    private String builtInEvent(
+            final String eventType, final String tradeId, final int amendmentIndex, final Instant now) {
         final LocalDateTime updateTime =
                 LocalDateTime.ofInstant(now.plusSeconds(amendmentIndex), ZoneOffset.UTC).withNano(0);
         final LocalDate today = LocalDate.ofInstant(now, ZoneOffset.UTC);
@@ -189,8 +254,6 @@ public final class TradeEventLoadProducer {
         references.put("orderId", "G182559711");
         references.putNull("reportTrackingNumber");
         payload.put("tradeUpdateDateTime", updateTime.toString());
-        payload.put("matchingStatus", "MATCHED");
-        payload.put("clearingStatus", "CLEARED");
         // Bumped per amendment so "latest payload wins" is visible downstream.
         payload.put("notional", 1_000_000 + amendmentIndex);
         payload.putNull("positionId");
@@ -214,6 +277,9 @@ public final class TradeEventLoadProducer {
         lifeCycle.put("executionTime", updateTime.toString());
         lifeCycle.put("clearingDate", today.toString());
         lifeCycle.putNull("marketDateTime");
+        // Required non-null by the processor's TradeLifeCycle invariants — must live INSIDE lifeCycle.
+        lifeCycle.put("matchingStatus", "MATCHED");
+        lifeCycle.put("clearingStatus", "CLEARED");
         final ObjectNode tradeSubType = payload.putObject("tradeSubType");
         tradeSubType.putNull("code");
         tradeSubType.putNull("name");
