@@ -1,0 +1,11 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="App (profiling)" type="Application" factoryName="Application">
+    <option name="MAIN_CLASS_NAME" value="com.bnpparibas.dec.bookingconfirmation.ZephyrBookingConfirmationApplication" />
+    <module name="zephyr-booking-confirmation-service" />
+    <option name="VM_PARAMETERS" value="-Dspring.profiles.active=local -Xms1g -Xmx1g -Xlog:gc*,gc+heap=info,gc+age=debug,safepoint:file=target/gc-%t.log:time,uptime,level,tags:filecount=5,filesize=20m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=target/ -XX:StartFlightRecording=maxage=30m,filename=target/run.jfr,settings=profile" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

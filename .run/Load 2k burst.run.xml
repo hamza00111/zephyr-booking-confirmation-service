@@ -1,0 +1,11 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Load 2k burst" type="Application" factoryName="Application">
+    <option name="MAIN_CLASS_NAME" value="com.bnpparibas.dec.bookingconfirmation.loadtest.TradeEventLoadProducer" />
+    <module name="zephyr-booking-confirmation-service.test" />
+    <option name="PROGRAM_PARAMETERS" value="--trades 2000 --events-per-trade 1" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>
