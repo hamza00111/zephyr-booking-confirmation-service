@@ -35,6 +35,25 @@ public class JdbcInboxRepository implements InboxRepository {
                  :rawPayload, :traceId, :headers, 'NEW')
             """;
 
+    /**
+     * Batch insert-if-absent. MERGE (rather than the {@code IGNORE_ROW_ON_DUPKEY_INDEX} hint) so
+     * the dedupe rule is spelled out logically in the ON clause instead of naming a physical
+     * index, and so the driver reports real per-row counts (1 inserted / 0 duplicate) instead of
+     * {@code SUCCESS_NO_INFO}.
+     */
+    private static final String INSERT_ALL_SQL =
+            """
+            MERGE INTO BOOKING_CONFIRMATION_INBOX t
+            USING (SELECT :region AS REGION, :idempotencyKey AS IDEMPOTENCY_KEY FROM dual) s
+               ON (t.REGION = s.REGION AND t.IDEMPOTENCY_KEY = s.IDEMPOTENCY_KEY)
+             WHEN NOT MATCHED THEN INSERT
+                (REGION, IDEMPOTENCY_KEY, SOURCE_TOPIC, KAFKA_PARTITION, KAFKA_OFFSET, MESSAGE_KEY,
+                 RAW_PAYLOAD, TRACE_ID, HEADERS, PROCESSING_STATUS)
+             VALUES
+                (s.REGION, s.IDEMPOTENCY_KEY, :sourceTopic, :partition, :offset, :messageKey,
+                 :rawPayload, :traceId, :headers, 'NEW')
+            """;
+
     private static final String INSERT_PARKED_SQL =
             """
             INSERT INTO BOOKING_CONFIRMATION_INBOX
@@ -140,7 +159,26 @@ public class JdbcInboxRepository implements InboxRepository {
 
     @Override
     public boolean insertIfAbsent(final InboxMessage message) {
-        final MapSqlParameterSource params = new MapSqlParameterSource()
+        try {
+            return jdbcTemplate.update(INSERT_SQL, insertParams(message)) > 0;
+        } catch (final DuplicateKeyException duplicate) {
+            // Already ingested (at-least-once redelivery) — idempotent no-op.
+            return false;
+        }
+    }
+
+    @Override
+    public int[] insertAllIfAbsent(final List<InboxMessage> messages) {
+        if (messages.isEmpty()) {
+            return new int[0];
+        }
+        return jdbcTemplate.batchUpdate(
+                INSERT_ALL_SQL,
+                messages.stream().map(JdbcInboxRepository::insertParams).toArray(MapSqlParameterSource[]::new));
+    }
+
+    private static MapSqlParameterSource insertParams(final InboxMessage message) {
+        return new MapSqlParameterSource()
                 .addValue("region", message.region().name())
                 .addValue("idempotencyKey", message.idempotencyKey())
                 .addValue("sourceTopic", message.sourceTopic())
@@ -150,12 +188,6 @@ public class JdbcInboxRepository implements InboxRepository {
                 .addValue("rawPayload", message.rawPayload())
                 .addValue("traceId", message.traceId())
                 .addValue("headers", message.headers());
-        try {
-            return jdbcTemplate.update(INSERT_SQL, params) > 0;
-        } catch (final DuplicateKeyException duplicate) {
-            // Already ingested (at-least-once redelivery) — idempotent no-op.
-            return false;
-        }
     }
 
     @Override

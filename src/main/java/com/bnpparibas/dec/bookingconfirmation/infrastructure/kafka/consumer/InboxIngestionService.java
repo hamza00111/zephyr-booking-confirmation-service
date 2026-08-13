@@ -8,9 +8,12 @@ import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.repository.InboxRepository;
 import com.bnpparibas.dec.bookingconfirmation.infrastructure.kafka.KafkaHeaderCodec;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
+import org.springframework.kafka.listener.BatchListenerFailedException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -43,38 +46,109 @@ public class InboxIngestionService {
     }
 
     public void ingest(final ConsumerRecord<String, String> record) {
-        final Region region = topicRegionResolver.regionFor(record.topic());
-
         if (record.value() == null) {
-            log.warn("[{}] Null payload at {}-{}@{} — skipping", region, record.topic(), record.partition(), record.offset());
+            log.warn("Null payload at {}-{}@{} — skipping", record.topic(), record.partition(), record.offset());
             return;
         }
+        final InboxMessage message = toInboxMessage(record);
+        try (var ignored = TraceMdc.scope(message.traceId())) {
+            recordOutcome(message, inboxRepository.insertIfAbsent(message));
+        }
+    }
 
-        final String traceId = tradeEventCodec.traceId(record.value()).orElse(null);
-        final String headers = KafkaHeaderCodec.toJson(record.headers());
-        try (var ignored = TraceMdc.scope(traceId)) {
-            final String idempotencyKey = idempotencyKey(record);
-            final InboxMessage message = new InboxMessage(
-                    null,
-                    region,
-                    idempotencyKey,
-                    record.topic(),
-                    record.partition(),
-                    record.offset(),
-                    record.key(),
-                    record.value(),
-                    traceId,
-                    headers);
+    /**
+     * Batch ingestion (batch listener path): one inbox round trip per consumer poll.
+     *
+     * <p>Ordering contract with {@code DefaultErrorHandler}: throwing {@link
+     * BatchListenerFailedException} with index {@code i} causes the offsets of every record BEFORE
+     * {@code i} to be committed. Therefore every record before a throw MUST already be persisted —
+     * that is why the mapping-catch flushes the collected prefix before throwing, and why the
+     * row-by-row fallback walks strictly in order. Do not "simplify" either without re-reading
+     * this comment.
+     */
+    public void ingestBatch(final List<ConsumerRecord<String, String>> records) {
+        final List<InboxMessage> messages = new ArrayList<>(records.size());
+        final List<Integer> sourceIndex = new ArrayList<>(records.size());
 
-            final boolean inserted = inboxRepository.insertIfAbsent(message);
-            if (inserted) {
-                metrics.inboxIngested(region);
-                log.debug("[{}] Ingested message idempotencyKey={}", region, idempotencyKey);
-            } else {
-                metrics.inboxDuplicate(region);
-                log.debug("[{}] Duplicate message idempotencyKey={} — already in inbox", region, idempotencyKey);
+        for (int i = 0; i < records.size(); i++) {
+            final ConsumerRecord<String, String> record = records.get(i);
+            if (record.value() == null) {
+                // Safe to skip without special handling: the listener's batch-end ack covers it.
+                log.warn(
+                        "Null payload at {}-{}@{} — skipping (tombstones are not ingested)",
+                        record.topic(),
+                        record.partition(),
+                        record.offset());
+                continue;
+            }
+            try {
+                messages.add(toInboxMessage(record));
+                sourceIndex.add(i);
+            } catch (final Exception mappingFailure) {
+                insertAllAndRecordMetrics(messages, sourceIndex); // persist prefix FIRST (see contract)
+                throw new BatchListenerFailedException("Mapping failed", mappingFailure, i);
             }
         }
+
+        insertAllAndRecordMetrics(messages, sourceIndex);
+    }
+
+    private void insertAllAndRecordMetrics(final List<InboxMessage> messages, final List<Integer> sourceIndex) {
+        if (messages.isEmpty()) {
+            return;
+        }
+        try {
+            final int[] counts = inboxRepository.insertAllIfAbsent(messages);
+            for (int j = 0; j < counts.length; j++) {
+                // MERGE reports 1 inserted / 0 duplicate; a driver reporting SUCCESS_NO_INFO (-2)
+                // is counted as ingested.
+                recordOutcome(messages.get(j), counts[j] != 0);
+            }
+        } catch (final Exception batchFailure) {
+            // Row-by-row replay isolates the poison row. Rows the failed batch DID land are
+            // re-inserted here and dedupe to "duplicate" — slight metric skew on this rare path,
+            // accepted.
+            log.warn("Batch inbox insert of {} records failed — replaying row by row", messages.size(), batchFailure);
+            insertPerMessage(messages, sourceIndex);
+        }
+    }
+
+    private void insertPerMessage(final List<InboxMessage> messages, final List<Integer> sourceIndex) {
+        for (int j = 0; j < messages.size(); j++) {
+            try {
+                recordOutcome(messages.get(j), inboxRepository.insertIfAbsent(messages.get(j)));
+            } catch (final Exception rowFailure) {
+                throw new BatchListenerFailedException("Insert failed", rowFailure, sourceIndex.get(j));
+            }
+        }
+    }
+
+    private void recordOutcome(final InboxMessage message, final boolean inserted) {
+        if (inserted) {
+            metrics.inboxIngested(message.region());
+            log.debug("[{}] Ingested message idempotencyKey={}", message.region(), message.idempotencyKey());
+        } else {
+            metrics.inboxDuplicate(message.region());
+            log.debug(
+                    "[{}] Duplicate message idempotencyKey={} — already in inbox",
+                    message.region(),
+                    message.idempotencyKey());
+        }
+    }
+
+    private InboxMessage toInboxMessage(final ConsumerRecord<String, String> record) {
+        final Region region = topicRegionResolver.regionFor(record.topic());
+        return new InboxMessage(
+                null,
+                region,
+                idempotencyKey(record),
+                record.topic(),
+                record.partition(),
+                record.offset(),
+                record.key(),
+                record.value(),
+                tradeEventCodec.traceId(record.value()).orElse(null),
+                KafkaHeaderCodec.toJson(record.headers()));
     }
 
     /**
@@ -101,7 +175,7 @@ public class InboxIngestionService {
         // the record redelivers in a loop (loud, no loss). Unreachable while the listener subscribes
         // only to @topicRegionResolver.internalTopics() — the same map regionFor reads.
         final Region region = topicRegionResolver.regionFor(record.topic());
-        final Throwable rootFailure = failure.getCause() != null ? failure.getCause() : failure;
+        final Throwable rootFailure = rootCause(failure);
         final String traceId =
                 clamp(tradeEventCodec.traceId(record.value()).orElse(null), 64);
         try (var ignored = TraceMdc.scope(traceId)) {
@@ -136,6 +210,19 @@ public class InboxIngestionService {
                         record.offset());
             }
         }
+    }
+
+    /**
+     * Unwraps to the root cause ({@code ListenerExecutionFailedException} →
+     * {@code BatchListenerFailedException} → the real failure) so ERROR_MESSAGE records what
+     * actually broke, not the wrapper. Cycle-guarded.
+     */
+    private static Throwable rootCause(final Throwable failure) {
+        Throwable current = failure;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private static String clamp(final String value, final int maxLength) {

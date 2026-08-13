@@ -23,6 +23,13 @@ public interface InboxRepository {
     boolean insertIfAbsent(InboxMessage message);
 
     /**
+     * Batch variant of {@link #insertIfAbsent}: one round trip for a whole consumer poll. Returns
+     * one update count per message, in order — {@code 1} inserted, {@code 0} already present
+     * (deduped on {@code (region, idempotencyKey)}).
+     */
+    int[] insertAllIfAbsent(List<InboxMessage> messages);
+
+    /**
      * Claims up to {@code limit} {@code NEW} rows for the region, restricted to the given owned
      * {@code partitions}, using {@code FOR UPDATE SKIP LOCKED}. Returns empty if {@code partitions}
      * is empty.

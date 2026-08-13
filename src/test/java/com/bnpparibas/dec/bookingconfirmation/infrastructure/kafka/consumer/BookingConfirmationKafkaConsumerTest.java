@@ -6,6 +6,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import java.util.List;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,6 +14,7 @@ import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.listener.BatchListenerFailedException;
 import org.springframework.kafka.support.Acknowledgment;
 
 @ExtendWith(MockitoExtension.class)
@@ -28,27 +30,28 @@ class BookingConfirmationKafkaConsumerTest {
     private BookingConfirmationKafkaConsumer consumer;
 
     @Test
-    void onMessage_shouldIngestThenAcknowledge_onSuccess() {
-        var record = record();
+    void onMessages_shouldIngestBatchThenAcknowledge_onSuccess() {
+        var records = List.of(record(0L), record(1L));
 
-        consumer.onMessage(record, acknowledgment);
+        consumer.onMessages(records, acknowledgment);
 
         InOrder inOrder = inOrder(ingestionService, acknowledgment);
-        inOrder.verify(ingestionService).ingest(record);
+        inOrder.verify(ingestionService).ingestBatch(records);
         inOrder.verify(acknowledgment).acknowledge();
     }
 
     @Test
-    void onMessage_shouldNotAcknowledge_whenIngestThrows() {
-        var record = record();
-        willThrow(new RuntimeException("db down")).given(ingestionService).ingest(record);
+    void onMessages_shouldNotAcknowledge_whenIngestBatchThrows() {
+        var records = List.of(record(0L), record(1L));
+        willThrow(new BatchListenerFailedException("Insert failed", 1)).given(ingestionService).ingestBatch(records);
 
-        assertThatThrownBy(() -> consumer.onMessage(record, acknowledgment)).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> consumer.onMessages(records, acknowledgment))
+                .isInstanceOf(BatchListenerFailedException.class);
 
         verify(acknowledgment, never()).acknowledge();
     }
 
-    private static ConsumerRecord<String, String> record() {
-        return new ConsumerRecord<>("local.booking.trade.internal.amer", 0, 0L, "GSS_1", "{}");
+    private static ConsumerRecord<String, String> record(final long offset) {
+        return new ConsumerRecord<>("local.booking.trade.internal.amer", 0, offset, "GSS_1", "{}");
     }
 }

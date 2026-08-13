@@ -75,6 +75,8 @@ class KafkaConsumerConfigTest {
                 3L);
 
         assertThat(listenerFactory).isNotNull();
+        // Batch mode is the throughput contract: one poll, one listener call, one commit.
+        assertThat(listenerFactory.isBatchListener()).isTrue();
     }
 
     @Test

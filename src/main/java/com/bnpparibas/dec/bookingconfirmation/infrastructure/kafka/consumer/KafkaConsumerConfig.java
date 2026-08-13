@@ -79,6 +79,10 @@ public class KafkaConsumerConfig {
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
         factory.setConcurrency(concurrency);
+        // Batch mode: the listener receives the whole poll and acks once — one offset commit per
+        // poll instead of per record. Batch listeners are also outside Spring Kafka's per-record
+        // Micrometer observation, so no per-record observation overhead can ever apply here.
+        factory.setBatchListener(true);
         factory.getContainerProperties().setAckMode(AckMode.MANUAL_IMMEDIATE);
         // Track which partitions this instance owns so the scheduled drains can scope by them (ADR 0001).
         factory.getContainerProperties()

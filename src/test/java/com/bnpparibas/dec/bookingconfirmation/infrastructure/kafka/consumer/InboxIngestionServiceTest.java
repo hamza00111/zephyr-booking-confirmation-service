@@ -101,6 +101,72 @@ class InboxIngestionServiceTest {
     }
 
     @Test
+    void ingestBatch_shouldBatchInsertMappedRecords_andSkipTombstones() {
+        given(tradeEventCodec.traceId("{}")).willReturn(Optional.empty());
+        given(inboxRepository.insertAllIfAbsent(any())).willReturn(new int[] {1, 0});
+        var tombstone = new ConsumerRecord<String, String>(TOPIC, 0, 1L, "GSS_1", null);
+        var records = java.util.List.of(record(0L), tombstone, record(2L));
+
+        service.ingestBatch(records);
+
+        verify(inboxRepository).insertAllIfAbsent(argThat(messages -> messages.size() == 2
+                && messages.get(0).offset() == 0L
+                && messages.get(1).offset() == 2L));
+    }
+
+    @Test
+    void ingestBatch_shouldPersistPrefixThenThrowAtFailingIndex_whenMappingFails() {
+        given(tradeEventCodec.traceId("{}")).willReturn(Optional.empty());
+        given(inboxRepository.insertAllIfAbsent(any())).willReturn(new int[] {1, 1});
+        given(topicRegionResolver.regionFor("internal.unmapped")).willThrow(new IllegalStateException("unmapped"));
+        var poison = new ConsumerRecord<>("internal.unmapped", 0, 9L, "GSS_1", "{}");
+        var records = java.util.List.of(record(0L), record(1L), poison, record(3L));
+
+        assertThatThrownBy(() -> service.ingestBatch(records))
+                .isInstanceOf(org.springframework.kafka.listener.BatchListenerFailedException.class)
+                .hasMessageContaining("Mapping failed")
+                .extracting(e -> ((org.springframework.kafka.listener.BatchListenerFailedException) e).getIndex())
+                .isEqualTo(2);
+
+        // The two records before the failing index were persisted BEFORE the throw — the error
+        // handler will commit their offsets, so an unpersisted prefix would be silent loss.
+        verify(inboxRepository).insertAllIfAbsent(argThat(messages -> messages.size() == 2));
+    }
+
+    @Test
+    void ingestBatch_shouldIsolatePoisonRow_whenBatchInsertFails() {
+        given(tradeEventCodec.traceId("{}")).willReturn(Optional.empty());
+        given(inboxRepository.insertAllIfAbsent(any())).willThrow(new DataAccessResourceFailureException("batch"));
+        given(inboxRepository.insertIfAbsent(argThat(m -> m != null && m.offset() == 0L))).willReturn(true);
+        given(inboxRepository.insertIfAbsent(argThat(m -> m != null && m.offset() == 2L)))
+                .willThrow(new DataAccessResourceFailureException("row"));
+        var tombstone = new ConsumerRecord<String, String>(TOPIC, 0, 1L, "GSS_1", null);
+        var records = java.util.List.of(record(0L), tombstone, record(2L), record(3L));
+
+        // The tombstone shifts positions: message 1 of the insert list is record index 2.
+        assertThatThrownBy(() -> service.ingestBatch(records))
+                .isInstanceOf(org.springframework.kafka.listener.BatchListenerFailedException.class)
+                .hasMessageContaining("Insert failed")
+                .extracting(e -> ((org.springframework.kafka.listener.BatchListenerFailedException) e).getIndex())
+                .isEqualTo(2);
+    }
+
+    @Test
+    void ingestBatch_shouldNotTouchRepository_whenAllRecordsAreTombstones() {
+        var records = java.util.List.<ConsumerRecord<String, String>>of(
+                new ConsumerRecord<>(TOPIC, 0, 0L, "GSS_1", null),
+                new ConsumerRecord<>(TOPIC, 0, 1L, "GSS_2", null));
+
+        service.ingestBatch(records);
+
+        verifyNoInteractions(inboxRepository);
+    }
+
+    private static ConsumerRecord<String, String> record(final long offset) {
+        return new ConsumerRecord<>(TOPIC, 0, offset, "GSS_1", "{}");
+    }
+
+    @Test
     void park_shouldInsertRowWithRootCauseErrorMessage() {
         given(tradeEventCodec.traceId("{}")).willReturn(Optional.of("t-1"));
         var record = new ConsumerRecord<>(TOPIC, 0, 7L, "GSS_1", "{}");

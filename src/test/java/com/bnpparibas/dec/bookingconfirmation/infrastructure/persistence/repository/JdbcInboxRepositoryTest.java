@@ -3,7 +3,9 @@ package com.bnpparibas.dec.bookingconfirmation.infrastructure.persistence.reposi
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
@@ -52,6 +54,28 @@ class JdbcInboxRepositoryTest {
                 .willThrow(new DuplicateKeyException("UQ_INBOX_DEDUPE"));
 
         assertThat(repository.insertIfAbsent(message())).isFalse();
+    }
+
+    @Test
+    void insertAllIfAbsent_shouldNotTouchDatabase_whenMessagesEmpty() {
+        var repository = new JdbcInboxRepository(jdbcTemplate);
+
+        assertThat(repository.insertAllIfAbsent(List.of())).isEmpty();
+
+        verifyNoInteractions(jdbcTemplate);
+    }
+
+    @Test
+    void insertAllIfAbsent_shouldBatchUpdateOncePerMessage() {
+        var repository = new JdbcInboxRepository(jdbcTemplate);
+        given(jdbcTemplate.batchUpdate(anyString(), any(SqlParameterSource[].class)))
+                .willReturn(new int[] {1, 0});
+
+        int[] counts = repository.insertAllIfAbsent(List.of(message(), message()));
+
+        assertThat(counts).containsExactly(1, 0);
+        verify(jdbcTemplate)
+                .batchUpdate(anyString(), argThat((SqlParameterSource[] batch) -> batch.length == 2));
     }
 
     private static InboxMessage message() {
