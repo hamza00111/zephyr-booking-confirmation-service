@@ -2,6 +2,7 @@ package com.bnpparibas.dec.bookingconfirmation.infrastructure.persistence.reposi
 
 import static com.bnpparibas.dec.bookingconfirmation.infrastructure.config.datasource.ZephyrDataSourceConfiguration.ZEPHYR_NAMED_PARAMETER_JDBC_TEMPLATE;
 
+import com.bnpparibas.dec.bookingconfirmation.domain.model.AggregatedLink;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.RequeueOutcome;
@@ -115,8 +116,8 @@ public class JdbcInboxRepository implements InboxRepository {
     private static final String MARK_AGGREGATED =
             """
             UPDATE BOOKING_CONFIRMATION_INBOX
-            SET PROCESSING_STATUS = 'AGGREGATED', UPDATED_ON = SYSTIMESTAMP
-            WHERE ID IN (:ids) AND REGION = :region
+            SET PROCESSING_STATUS = 'AGGREGATED', AGGREGATED_INTO_ID = :intoId, UPDATED_ON = SYSTIMESTAMP
+            WHERE ID = :id AND REGION = :region
             """;
 
     private static final String MARK_PROCESS_FAILURE =
@@ -214,13 +215,18 @@ public class JdbcInboxRepository implements InboxRepository {
     }
 
     @Override
-    public void markAggregated(final Region region, final List<Long> ids) {
-        if (ids.isEmpty()) {
+    public void markAggregated(final Region region, final List<AggregatedLink> links) {
+        if (links.isEmpty()) {
             return;
         }
-        jdbcTemplate.update(
+        jdbcTemplate.batchUpdate(
                 MARK_AGGREGATED,
-                new MapSqlParameterSource().addValue("ids", ids).addValue("region", region.name()));
+                links.stream()
+                        .map(link -> new MapSqlParameterSource()
+                                .addValue("id", link.id())
+                                .addValue("intoId", link.aggregatedIntoId())
+                                .addValue("region", region.name()))
+                        .toArray(MapSqlParameterSource[]::new));
     }
 
     @Override

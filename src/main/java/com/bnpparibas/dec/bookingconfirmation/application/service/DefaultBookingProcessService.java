@@ -2,6 +2,7 @@ package com.bnpparibas.dec.bookingconfirmation.application.service;
 
 import com.bnpparibas.dec.bookingconfirmation.application.TraceMdc;
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEventTransformer;
+import com.bnpparibas.dec.bookingconfirmation.domain.model.AggregatedLink;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.BookingConfirmationAggregation;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.OutboxEvent;
@@ -92,15 +93,17 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
     private void apply(final BookingConfirmationAggregation aggregation, final TickOutcome outcome) {
         final ParsedTradeEvent survivor = aggregation.survivor();
         if (survivor == null) {
-            // Whole group netted out: created and busted within this drain.
-            outcome.aggregatedAway.addAll(aggregation.collapsedIds());
+            // Whole group netted out: created and busted within this drain — nothing survived
+            // to point at, so the lineage link is null ("aggregated to nothing").
+            aggregation.collapsedIds().forEach(id -> outcome.aggregatedAway.add(new AggregatedLink(id, null)));
             return;
         }
         final InboxMessage message = survivor.message();
         try (var ignored = TraceMdc.scope(message.traceId())) {
             tradeEventTransformer.toOutboxEvent(message, aggregation.emitAs()).ifPresent(outcome.toPublish::add);
             outcome.processed.add(message.id());
-            outcome.aggregatedAway.addAll(aggregation.collapsedIds());
+            aggregation.collapsedIds()
+                    .forEach(id -> outcome.aggregatedAway.add(new AggregatedLink(id, message.id())));
         } catch (final RuntimeException transformFailure) {
             log.error("[{}] Transform failed for inbox id={}", processIdentifier(), message.id(), transformFailure);
             // Fail the whole group, not just the survivor: emitAs is derived from the group.
@@ -136,7 +139,7 @@ public class DefaultBookingProcessService extends AbstractRegionScopedService im
     private static final class TickOutcome {
         private final List<OutboxEvent> toPublish = new ArrayList<>();
         private final List<Long> processed = new ArrayList<>();
-        private final List<Long> aggregatedAway = new ArrayList<>();
+        private final List<AggregatedLink> aggregatedAway = new ArrayList<>();
         private final List<Long> invalid = new ArrayList<>();
         private final List<Long> failed = new ArrayList<>();
     }

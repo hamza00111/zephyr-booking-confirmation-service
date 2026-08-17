@@ -8,6 +8,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import com.bnpparibas.dec.bookingconfirmation.domain.model.AggregatedLink;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import java.util.List;
@@ -54,6 +55,30 @@ class JdbcInboxRepositoryTest {
                 .willThrow(new DuplicateKeyException("UQ_INBOX_DEDUPE"));
 
         assertThat(repository.insertIfAbsent(message())).isFalse();
+    }
+
+    @Test
+    void markAggregated_shouldNotTouchDatabase_whenLinksEmpty() {
+        var repository = new JdbcInboxRepository(jdbcTemplate);
+
+        repository.markAggregated(Region.AMER, List.of());
+
+        verifyNoInteractions(jdbcTemplate);
+    }
+
+    @Test
+    void markAggregated_shouldBatchUpdateWithLineageLink() {
+        var repository = new JdbcInboxRepository(jdbcTemplate);
+        given(jdbcTemplate.batchUpdate(anyString(), any(SqlParameterSource[].class)))
+                .willReturn(new int[] {1, 1});
+
+        repository.markAggregated(
+                Region.AMER,
+                List.of(new AggregatedLink(1L, 3L), new AggregatedLink(2L, null)));
+
+        verify(jdbcTemplate).batchUpdate(anyString(), argThat((SqlParameterSource[] batch) -> batch.length == 2
+                && Long.valueOf(3L).equals(batch[0].getValue("intoId"))
+                && batch[1].getValue("intoId") == null));
     }
 
     @Test

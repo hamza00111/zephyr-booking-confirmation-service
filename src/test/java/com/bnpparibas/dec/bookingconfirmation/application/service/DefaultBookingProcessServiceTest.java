@@ -15,6 +15,7 @@ import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeEventTr
 import com.bnpparibas.dec.bookingconfirmation.application.transform.TradeFilter;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventBindingException;
 import com.bnpparibas.dec.bookingconfirmation.domain.event.TradeEventCodec;
+import com.bnpparibas.dec.bookingconfirmation.domain.model.AggregatedLink;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.TradeEventType;
@@ -108,6 +109,28 @@ class DefaultBookingProcessServiceTest {
     }
 
     @Test
+    void tick_shouldLinkAggregatedRowsToSurvivor_whenGroupCollapses() {
+        var service = processService();
+        var first = inbox(1L, "K1", PAYLOAD);
+        var second = inbox(2L, "K1", "{\"eventType\":\"TradeAmended\"}");
+        var third = inbox(3L, "K1", "{\"eventType\":\"TradeAmended\"}");
+        given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200))).willReturn(List.of(first, second, third));
+        given(tradeEventCodec.eventType(first.rawPayload())).willReturn(Optional.of(TradeEventType.TRADE_CREATED));
+        given(tradeEventCodec.eventType(second.rawPayload())).willReturn(Optional.of(TradeEventType.TRADE_AMENDED));
+        given(tradeEventCodec.eventType(third.rawPayload())).willReturn(Optional.of(TradeEventType.TRADE_AMENDED));
+        given(tradeEventCodec.deserialize(third.rawPayload(), TradeEventType.TRADE_CREATED)).willReturn(EVENT);
+        given(tradeEventCodec.serialize(EVENT)).willReturn(SERIALIZED);
+
+        service.tick();
+
+        // Both collapsed rows point at the surviving row (id 3), whose payload was published.
+        verify(inboxRepository).markProcessed(Region.AMER, List.of(3L));
+        verify(inboxRepository).markAggregated(eq(Region.AMER), argThat(links -> links.size() == 2
+                && links.contains(new AggregatedLink(1L, 3L))
+                && links.contains(new AggregatedLink(2L, 3L))));
+    }
+
+    @Test
     void tick_shouldMarkWholeGroupProcessFailure_whenTypedBindingFails() {
         var service = processService();
         given(inboxRepository.findNew(eq(Region.AMER), any(), eq(200)))
@@ -146,8 +169,10 @@ class DefaultBookingProcessServiceTest {
 
         service.tick();
 
-        verify(inboxRepository)
-                .markAggregated(eq(Region.AMER), argThat(ids -> ids.size() == 2 && ids.containsAll(List.of(1L, 2L))));
+        // Netted-out group: both rows aggregated with a null lineage link — nothing survived.
+        verify(inboxRepository).markAggregated(eq(Region.AMER), argThat(links -> links.size() == 2
+                && links.stream().allMatch(link -> link.aggregatedIntoId() == null)
+                && links.stream().map(AggregatedLink::id).toList().containsAll(List.of(1L, 2L))));
         verify(outboxRepository).insertAll(List.of());
     }
 
@@ -168,7 +193,8 @@ class DefaultBookingProcessServiceTest {
         verify(outboxRepository).insertAll(argThat(events ->
                 events.size() == 1 && SERIALIZED.equals(events.get(0).payload())));
         verify(inboxRepository).markProcessed(Region.AMER, List.of(2L));
-        verify(inboxRepository).markAggregated(Region.AMER, List.of(1L));
+        // The collapsed CREATED row records which surviving row absorbed it.
+        verify(inboxRepository).markAggregated(Region.AMER, List.of(new AggregatedLink(1L, 2L)));
     }
 
     @Test

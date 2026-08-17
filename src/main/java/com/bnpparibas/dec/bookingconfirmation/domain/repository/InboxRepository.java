@@ -1,5 +1,6 @@
 package com.bnpparibas.dec.bookingconfirmation.domain.repository;
 
+import com.bnpparibas.dec.bookingconfirmation.domain.model.AggregatedLink;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.InboxMessage;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.Region;
 import com.bnpparibas.dec.bookingconfirmation.domain.model.RequeueOutcome;
@@ -38,8 +39,11 @@ public interface InboxRepository {
 
     void markProcessed(Region region, List<Long> ids);
 
-    /** Marks rows collapsed away by per-trade aggregation (superseded or netted out, never published). */
-    void markAggregated(Region region, List<Long> ids);
+    /**
+     * Marks rows collapsed away by per-trade aggregation (superseded or netted out, never
+     * published), each recording which surviving row absorbed it — null for netted-out groups.
+     */
+    void markAggregated(Region region, List<AggregatedLink> links);
 
     void markProcessFailure(Region region, List<Long> ids, String errorMessage);
 

@@ -18,6 +18,8 @@ CREATE TABLE BOOKING_CONFIRMATION_INBOX (
     HEADERS           CLOB,                            -- inbound headers as JSON (optional)
     RAW_PAYLOAD       CLOB          NOT NULL,          -- pivot JSON as received
     PROCESSING_STATUS VARCHAR2(32)  NOT NULL,          -- NEW | PROCESSED | AGGREGATED | PROCESS_FAILURE | INGEST_FAILURE | INVALID
+    AGGREGATED_INTO_ID NUMBER,                         -- AGGREGATED rows only: ID of the surviving (PROCESSED) row
+                                                       -- whose event absorbed this one; NULL = group netted out
     RETRY_COUNT       NUMBER        DEFAULT 0 NOT NULL,
     ERROR_MESSAGE     CLOB,
     RECEIVED_ON       TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL,
