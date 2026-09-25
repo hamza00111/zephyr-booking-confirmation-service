@@ -1,0 +1,242 @@
+package com.bnpparibas.dec.bookingconfirmation.processor.application.service;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.StopWatch;
+
+import com.bnpparibas.dec.bookingconfirmation.processor.application.service.BookingConfirmationEmissionPlanner.EmissionPlan;
+import com.bnpparibas.dec.bookingconfirmation.processor.application.service.BookingConfirmationEmissionPlanner.Emission;
+
+/**
+ * Drains the NEW inbox rows of the owned partitions into outbox events, batch by batch:
+ * claim, aggregate, fetch the survivors' payloads, process them in parallel, then persist every
+ * status and the outbox inserts in one transaction.
+ *
+ * <p>Orchestration only. Deciding what to emit lives in {@link BookingConfirmationEmissionPlanner}, and per-row
+ * work (filter, enrich, serialize) in {@link BookingConfirmationTradeProcessor}.
+ */
+@Slf4j
+public class DefaultBookingConfirmationProcessService extends AbstractRegionScopedService {
+
+    private static final String INVALID_REASON = "No readable event type in payload";
+    private static final String FAILURE_REASON = "Transform failed in PROCESS stage";
+
+    private final BookingConfirmationInboundRepository inboundRepository;
+    private final BookingConfirmationOutboundRepository outboundRepository;
+    private final TransactionTemplate transactionTemplate;
+    private final BookingConfirmationEmissionPlanner emissionPlanner;
+    private final BookingConfirmationTradeProcessor tradeProcessor;
+    private final BookingConfirmationProcessorMetricsSupport metrics;
+    private final Executor processingExecutor;
+    private final int batchSize;
+
+    /**
+     * Keep your existing {@code super(...)} arguments. Inject {@code processingExecutor} with
+     * {@code @Qualifier("bookingConfirmationProcessingExecutor")}: Spring Boot also registers its own
+     * {@code applicationTaskExecutor}, so injection by type alone is ambiguous.
+     */
+    public DefaultBookingConfirmationProcessService(
+            final Region region,
+            final BookingConfirmationInboundRepository inboundRepository,
+            final BookingConfirmationOutboundRepository outboundRepository,
+            final TransactionTemplate transactionTemplate,
+            final BookingConfirmationEmissionPlanner emissionPlanner,
+            final BookingConfirmationTradeProcessor tradeProcessor,
+            final BookingConfirmationProcessorMetricsSupport metrics,
+            final Executor processingExecutor,
+            final int batchSize) {
+        super(region);
+        if (batchSize <= 0) {
+            // 0 would loop forever: an empty batch "claims" exactly batchSize rows
+            throw new IllegalArgumentException("batchSize must be > 0, got " + batchSize);
+        }
+        this.inboundRepository = inboundRepository;
+        this.outboundRepository = outboundRepository;
+        this.transactionTemplate = transactionTemplate;
+        this.emissionPlanner = emissionPlanner;
+        this.tradeProcessor = tradeProcessor;
+        this.metrics = metrics;
+        this.processingExecutor = processingExecutor;
+        this.batchSize = batchSize;
+    }
+
+    @Override
+    protected void doTick(final Set<Integer> ownedPartitions) {
+        supersedeStaleRetries(ownedPartitions);
+
+        final long startNanos = System.nanoTime();
+        int batchCount = 0;
+        BatchSummary tickTotals = BatchSummary.NONE;
+        BatchSummary lastBatch;
+        do {
+            batchCount++;
+            lastBatch = processBatch(ownedPartitions, batchCount);
+            tickTotals = tickTotals.plus(lastBatch);
+        } while (lastBatch.claimed() == batchSize);
+
+        if (tickTotals.claimed() > 0) {
+            log.info("[{}] Tick finished in {} ms, {} batches: {}",
+                    processIdentifier(), millisSince(startNanos), batchCount, tickTotals);
+        }
+    }
+
+    private BatchSummary processBatch(final Set<Integer> ownedPartitions, final int batchNumber) {
+        final StopWatch stopWatch = new StopWatch("batch-" + batchNumber);
+        final List<BookingConfirmationInboundMessage> claimed = timed(stopWatch, "claim", () -> claim(ownedPartitions));
+        if (claimed.isEmpty()) {
+            return BatchSummary.NONE;
+        }
+        // Aggregated from the event_type column only: rows that aggregate away are never fetched nor parsed.
+        final EmissionPlan plan = timed(stopWatch, "plan", () -> emissionPlanner.plan(claimed));
+        final Map<Long, String> payloads = timed(stopWatch, "fetchPayloads", () -> fetchPayloads(plan));
+        final List<ProcessOutcome> outcomes =
+                timed(stopWatch, "process", () -> processInParallel(plan.toEmit(), payloads));
+
+        final BatchStatuses statuses = BatchStatuses.of(plan, outcomes);
+        timed(stopWatch, "persist", () -> persist(statuses));
+
+        final BatchSummary summary = statuses.summary(claimed.size());
+        recordMetrics(summary);
+        if (log.isDebugEnabled()) {
+            log.debug("[{}] Batch {}: {}{}{}", processIdentifier(), batchNumber, summary,
+                    System.lineSeparator(), stopWatch.prettyPrint());
+        }
+        return summary;
+    }
+
+    private List<BookingConfirmationInboundMessage> claim(final Set<Integer> ownedPartitions) {
+        return transactionTemplate.execute(
+                ignored -> inboundRepository.findNewAndMarkAsProcessing(region(), ownedPartitions, batchSize));
+    }
+
+    private Map<Long, String> fetchPayloads(final EmissionPlan plan) {
+        if (plan.toEmit().isEmpty()) {
+            return Map.of(); // whole batch aggregated away or invalid: no round trip
+        }
+        return inboundRepository.fetchPayloads(region(), plan.inboxIdsToEmit());
+    }
+
+    /** Submits every row first, then waits: results keep the plan order. */
+    private List<ProcessOutcome> processInParallel(final List<Emission> toEmit, final Map<Long, String> payloads) {
+        final List<CompletableFuture<ProcessOutcome>> inFlight = new ArrayList<>(toEmit.size());
+        for (final Emission emission : toEmit) {
+            final String rawPayload = payloads.get(emission.inboxId());
+            inFlight.add(CompletableFuture.supplyAsync(
+                    () -> tradeProcessor.process(emission, rawPayload), processingExecutor));
+        }
+        return inFlight.stream().map(CompletableFuture::join).toList();
+    }
+
+    /** Outbox inserts and every inbox status transition commit together, or not at all. */
+    private void persist(final BatchStatuses statuses) {
+        transactionTemplate.executeWithoutResult(ignored -> {
+            outboundRepository.insertAll(statuses.toPublish());
+            inboundRepository.markProcessed(region(), statuses.processedIds());
+            inboundRepository.markExcluded(region(), statuses.excluded());
+            inboundRepository.markAggregated(region(), statuses.aggregatedAway());
+            inboundRepository.markInvalid(region(), statuses.invalidIds(), INVALID_REASON);
+            inboundRepository.markProcessFailure(region(), statuses.failedIds(), FAILURE_REASON);
+        });
+    }
+
+    private void supersedeStaleRetries(final Set<Integer> ownedPartitions) {
+        final long startNanos = System.nanoTime();
+        transactionTemplate.executeWithoutResult(
+                ignored -> inboundRepository.supersedeStaleRetries(region(), ownedPartitions));
+        log.debug("[{}] Superseded stale retries in {} ms", processIdentifier(), millisSince(startNanos));
+    }
+
+    private void recordMetrics(final BatchSummary summary) {
+        metrics.processSuccess(region(), summary.processed());
+        metrics.processExcluded(region(), summary.excluded());
+        metrics.processAggregated(region(), summary.aggregatedAway());
+        metrics.processInvalid(region(), summary.invalid());
+        metrics.processFailed(region(), summary.failed());
+    }
+
+    private static <T> T timed(final StopWatch stopWatch, final String phase, final Supplier<T> step) {
+        stopWatch.start(phase);
+        try {
+            return step.get();
+        } finally {
+            stopWatch.stop();
+        }
+    }
+
+    private static void timed(final StopWatch stopWatch, final String phase, final Runnable step) {
+        stopWatch.start(phase);
+        try {
+            step.run();
+        } finally {
+            stopWatch.stop();
+        }
+    }
+
+    private static long millisSince(final long startNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+    }
+
+    /** Final status of every row claimed in one batch, as persisted by {@link #persist}. */
+    private record BatchStatuses(
+            List<BookingConfirmationOutboundEvent> toPublish,
+            List<Long> processedIds,
+            List<ProcessOutcome.Excluded> excluded,
+            List<AggregatedLink> aggregatedAway,
+            List<Long> invalidIds,
+            List<Long> failedIds) {
+
+        static BatchStatuses of(final EmissionPlan plan, final List<ProcessOutcome> outcomes) {
+            final BatchStatuses statuses = new BatchStatuses(
+                    new ArrayList<>(), new ArrayList<>(), new ArrayList<>(),
+                    plan.aggregatedAway(), new ArrayList<>(plan.invalidIds()), new ArrayList<>());
+            for (final ProcessOutcome outcome : outcomes) {
+                switch (outcome) {
+                    case ProcessOutcome.Processed processed -> {
+                        statuses.processedIds.add(processed.inboxId());
+                        statuses.toPublish.add(processed.event());
+                    }
+                    case ProcessOutcome.Excluded excludedRow -> statuses.excluded.add(excludedRow);
+                    case ProcessOutcome.Invalid invalid -> statuses.invalidIds.add(invalid.inboxId());
+                    case ProcessOutcome.Failed failed -> statuses.failedIds.add(failed.inboxId());
+                }
+            }
+            return statuses;
+        }
+
+        BatchSummary summary(final int claimed) {
+            return new BatchSummary(claimed, processedIds.size(), excluded.size(),
+                    aggregatedAway.size(), invalidIds.size(), failedIds.size());
+        }
+    }
+
+    /** Row counts for one batch, or summed over a tick. */
+    private record BatchSummary(int claimed, int processed, int excluded, int aggregatedAway, int invalid, int failed) {
+
+        static final BatchSummary NONE = new BatchSummary(0, 0, 0, 0, 0, 0);
+
+        BatchSummary plus(final BatchSummary other) {
+            return new BatchSummary(
+                    claimed + other.claimed,
+                    processed + other.processed,
+                    excluded + other.excluded,
+                    aggregatedAway + other.aggregatedAway,
+                    invalid + other.invalid,
+                    failed + other.failed);
+        }
+
+        @Override
+        public String toString() {
+            return claimed + " records - " + processed + " processed, " + excluded + " excluded, "
+                    + aggregatedAway + " aggregated away, " + invalid + " invalid, " + failed + " failed";
+        }
+    }
+}
