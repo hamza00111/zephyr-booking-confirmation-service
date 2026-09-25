@@ -1,0 +1,92 @@
+package com.bnpparibas.dec.bookingconfirmation.processor.application.service;
+
+import java.util.Optional;
+
+import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
+import org.springframework.lang.Nullable;
+
+import com.bnpparibas.dec.bookingconfirmation.processor.application.service.BookingConfirmationEmissionPlanner.Emission;
+
+/**
+ * Processes one row to emit: parse the payload, filter, enrich, serialize into the outbound event.
+ *
+ * <p>Never throws. Every result, failures included, comes back as a {@link ProcessOutcome}, so one bad
+ * row cannot abort the batch. Stateless, so it is safe to call from parallel workers.
+ */
+@Slf4j
+public class BookingConfirmationTradeProcessor {
+
+    private final Region region;
+    private final String destination;
+    private final TradeEventCodec codec;
+    private final BookingConfirmationTradeFilter tradeFilter;
+    private final BookingConfirmationTradeEnricher tradeEnricher;
+
+    public BookingConfirmationTradeProcessor(
+            final Region region,
+            final String destination,
+            final TradeEventCodec codec,
+            final BookingConfirmationTradeFilter tradeFilter,
+            final BookingConfirmationTradeEnricher tradeEnricher) {
+        this.region = region;
+        this.destination = destination;
+        this.codec = codec;
+        this.tradeFilter = tradeFilter;
+        this.tradeEnricher = tradeEnricher;
+    }
+
+    public ProcessOutcome process(final Emission emission, @Nullable final String rawPayload) {
+        final BookingConfirmationInboundMessage message = emission.message();
+        try (final MDC.MDCCloseable ignored = TracingSupport.correlationId(message.correlationId())) {
+            final TradeEvent tradeEvent = parse(message, rawPayload);
+            if (tradeEvent == null) {
+                log.warn("[{}] Payload of inbox id={} holds no trade event", region, message.id());
+                return new ProcessOutcome.Invalid(message.id());
+            }
+            final Optional<String> excludedBy = tradeFilter.excludedBy(message, tradeEvent);
+            if (excludedBy.isPresent()) {
+                return new ProcessOutcome.Excluded(message.id(), excludedBy.get());
+            }
+            final TradeEvent enriched = tradeEnricher.enrich(message, tradeEvent, emission.emitAs());
+            return new ProcessOutcome.Processed(message.id(), toOutboundEvent(message, enriched, emission.emitAs()));
+        } catch (final TradeEventBindingException bindingFailure) {
+            log.error("[{}] Deserialization failed for inbox id={}", region, message.id(), bindingFailure);
+            return new ProcessOutcome.Invalid(message.id());
+        } catch (final RuntimeException failure) {
+            // Bulkhead: the row is persisted as FAILED instead of aborting the batch and leaving every
+            // other row stuck in PROCESSING.
+            log.error("[{}] Processing failed for inbox id={}", region, message.id(), failure);
+            return new ProcessOutcome.Failed(message.id());
+        }
+    }
+
+    @Nullable
+    private TradeEvent parse(final BookingConfirmationInboundMessage message, @Nullable final String rawPayload) {
+        if (rawPayload == null) {
+            throw new IllegalStateException("No payload found for inbox id=" + message.id());
+        }
+        return codec.deserialize(rawPayload);
+    }
+
+    private BookingConfirmationOutboundEvent toOutboundEvent(
+            final BookingConfirmationInboundMessage message,
+            final TradeEvent payload,
+            final TradeEventType emitAs) {
+        return new BookingConfirmationOutboundEvent(
+                null, // id: assigned by the outbox insert
+                region,
+                message.idempotencyKey(),
+                destination,
+                message.messageKey(),
+                message.partition(),
+                message.correlationId(),
+                message.hub(),
+                message.firm(),
+                message.sourceId(),
+                message.bookingConfirmationId(),
+                codec.serialize(payload),
+                message.id(),
+                emitAs);
+    }
+}
