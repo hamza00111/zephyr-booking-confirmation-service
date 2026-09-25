@@ -1,0 +1,226 @@
+package com.bnpparibas.dec.bookingconfirmation.processor.application.service;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.lang.Nullable;
+
+/**
+ * Decides what one claimed batch emits. Takes the claimed inbox rows and returns an
+ * {@link EmissionPlan}: which rows are emitted and as which event type, which rows are aggregated
+ * away (and into which survivor), and which are invalid.
+ *
+ * <p>Not to be confused with the common module's {@link BookingConfirmationTradeEventAggregator},
+ * which only collapses events per trade and which this class calls.
+ *
+ * <p>Works from the {@code event_type} column only, so payloads of rows that aggregate away are
+ * never fetched nor parsed. Rules, in order:
+ * <ol>
+ *   <li>A row with a missing or unknown event type is INVALID.</li>
+ *   <li>Rows of the same trade (message key) collapse into one survivor. That rule is the generic
+ *       {@link BookingConfirmationTradeEventAggregator} of the common module, used as is.</li>
+ *   <li>The first event downstream sees for a trade must be a create, see {@link #emitTypeOf}.</li>
+ * </ol>
+ */
+@Slf4j
+public class BookingConfirmationEmissionPlanner {
+
+    /** The only types that assume downstream already received the trade's create. */
+    private static final Set<TradeEventType> AMEND_OR_DELETE =
+            EnumSet.of(TradeEventType.TRADE_AMENDED, TradeEventType.TRADE_DELETED);
+
+    private static final Map<String, TradeEventType> EVENT_TYPES_BY_NAME = Arrays.stream(TradeEventType.values())
+            .collect(Collectors.toUnmodifiableMap(TradeEventType::name, Function.identity()));
+
+    private final Region region;
+    private final BookingConfirmationInboundRepository inboundRepository;
+
+    public BookingConfirmationEmissionPlanner(
+            final Region region, final BookingConfirmationInboundRepository inboundRepository) {
+        this.region = region;
+        this.inboundRepository = inboundRepository;
+    }
+
+    public EmissionPlan plan(final List<BookingConfirmationInboundMessage> messages) {
+        final List<TradeEventAggregationCandidate> candidates = new ArrayList<>(messages.size());
+        final List<Long> invalidIds = new ArrayList<>();
+        for (final BookingConfirmationInboundMessage message : messages) {
+            final Optional<TradeEventType> eventType = eventTypeOf(message);
+            if (eventType.isPresent()) {
+                candidates.add(new TradeEventAggregationCandidate(message, eventType.get(), null));
+            } else {
+                log.warn("[{}] Inbox id={} has unknown event_type '{}': INVALID",
+                        region, message.id(), message.eventType());
+                invalidIds.add(message.id());
+            }
+        }
+        final List<TradeGroup> groups = BookingConfirmationTradeEventAggregator.aggregate(candidates).stream()
+                .map(TradeGroup::of)
+                .toList();
+        return decide(groups, findKeysWithExcludedCreateNotYetEmitted(groups), invalidIds);
+    }
+
+    /**
+     * Enforces "the first event downstream sees for a trade must be a create".
+     *
+     * <p>When a trade's CREATE was excluded by a filter and nothing has been emitted for it since,
+     * downstream has never seen the trade. Then an AMEND is promoted to TRADE_CREATED, carrying the
+     * latest payload, and a DELETE is dropped, since there is nothing downstream to delete. In every
+     * other case the aggregated type is emitted unchanged.
+     *
+     * @param createExcludedAndNothingEmitted the trade's CREATE was excluded and nothing was emitted since
+     * @return the type to emit, or empty when nothing must be emitted
+     */
+    static Optional<TradeEventType> emitTypeOf(
+            final TradeEventType aggregatedType, final boolean createExcludedAndNothingEmitted) {
+        if (!createExcludedAndNothingEmitted) {
+            return Optional.of(aggregatedType);
+        }
+        return switch (aggregatedType) {
+            case TRADE_AMENDED -> Optional.of(TradeEventType.TRADE_CREATED);
+            case TRADE_DELETED -> Optional.empty();
+            default -> Optional.of(aggregatedType);
+        };
+    }
+
+    private static EmissionPlan decide(
+            final List<TradeGroup> groups,
+            final Set<String> excludedCreateNotYetEmittedKeys,
+            final List<Long> invalidIds) {
+        final List<Emission> toEmit = new ArrayList<>(groups.size());
+        final List<AggregatedLink> aggregatedAway = new ArrayList<>();
+        for (final TradeGroup group : groups) {
+            final Optional<Emission> survivorToEmit = findSurvivorToEmit(group, excludedCreateNotYetEmittedKeys);
+            if (survivorToEmit.isPresent()) {
+                toEmit.add(survivorToEmit.get());
+                linkAll(group.collapsedIds(), survivorToEmit.get().inboxId(), aggregatedAway);
+            } else {
+                linkAll(group.allIds(), null, aggregatedAway); // nothing emitted: every row is dropped
+            }
+        }
+        return new EmissionPlan(toEmit, aggregatedAway, invalidIds);
+    }
+
+    /**
+     * The group's survivor with the type to emit it as, or empty when nothing goes downstream:
+     * CREATE and DELETE cancelled out in this batch, or a DELETE for a trade whose CREATE was
+     * excluded and that has had nothing emitted since.
+     */
+    private static Optional<Emission> findSurvivorToEmit(
+            final TradeGroup group, final Set<String> excludedCreateNotYetEmittedKeys) {
+        final TradeEventAggregationCandidate survivor = group.survivor();
+        if (survivor == null) {
+            return Optional.empty(); // CREATE and DELETE in the same batch cancel out
+        }
+        final String messageKey = group.messageKey();
+        final boolean createExcludedAndNothingEmitted =
+                messageKey != null && excludedCreateNotYetEmittedKeys.contains(messageKey);
+        return emitTypeOf(group.aggregatedType(), createExcludedAndNothingEmitted)
+                .map(emitAs -> new Emission(survivor.message(), emitAs));
+    }
+
+    /**
+     * Of the trades in this batch that would emit an AMEND or a DELETE, returns the keys whose CREATE
+     * was excluded in an earlier batch and that have had nothing emitted since. A CREATE group needs no
+     * check, and within one batch the common aggregator already folds a CREATE into its AMENDs.
+     *
+     * <p>One query per batch, skipped when no group needs it. Keyless survivors cannot be linked to
+     * earlier batches and are never checked.
+     */
+    private Set<String> findKeysWithExcludedCreateNotYetEmitted(final List<TradeGroup> groups) {
+        final Set<String> keysToCheck = groups.stream()
+                .filter(group -> AMEND_OR_DELETE.contains(group.aggregatedType()))
+                .map(TradeGroup::messageKey)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        return keysToCheck.isEmpty()
+                ? Set.of()
+                : inboundRepository.messageKeysWithExcludedCreateNotYetEmitted(region, keysToCheck);
+    }
+
+    private static Optional<TradeEventType> eventTypeOf(final BookingConfirmationInboundMessage message) {
+        return Optional.ofNullable(message.eventType()).map(EVENT_TYPES_BY_NAME::get);
+    }
+
+    private static void linkAll(
+            final List<Long> ids, @Nullable final Long survivorId, final List<AggregatedLink> aggregatedAway) {
+        ids.forEach(id -> aggregatedAway.add(new AggregatedLink(id, survivorId)));
+    }
+
+    /**
+     * One aggregation from the common module, typed. Built once per group: the common aggregation
+     * returns its survivor untyped, and this is the only place it is cast.
+     *
+     * @param survivor       the row to emit, or null when CREATE and DELETE cancelled out
+     * @param aggregatedType the common aggregator's decision, before the excluded-create rule; null
+     *                       when there is no survivor
+     * @param collapsedIds   every other row of the group
+     */
+    private record TradeGroup(
+            @Nullable TradeEventAggregationCandidate survivor,
+            @Nullable TradeEventType aggregatedType,
+            List<Long> collapsedIds) {
+
+        static TradeGroup of(final BookingConfirmationAggregation aggregation) {
+            return new TradeGroup(
+                    (TradeEventAggregationCandidate) aggregation.eventToRetain(),
+                    aggregation.eventTypeToEmit(),
+                    aggregation.collapsedIds());
+        }
+
+        /** Null when there is no survivor or the survivor has no message key. */
+        @Nullable
+        String messageKey() {
+            return survivor == null ? null : survivor.message().messageKey();
+        }
+
+        /** Collapsed rows first, then the survivor if there is one. */
+        List<Long> allIds() {
+            if (survivor == null) {
+                return collapsedIds;
+            }
+            final List<Long> ids = new ArrayList<>(collapsedIds);
+            ids.add(survivor.id());
+            return ids;
+        }
+    }
+
+    /**
+     * Everything aggregated for one batch. Every claimed row appears exactly once across the three
+     * lists.
+     *
+     * @param toEmit         one row per trade to process and emit, with the type downstream must see
+     * @param aggregatedAway rows folded into a survivor, or dropped when {@code aggregatedIntoId} is null
+     * @param invalidIds     rows whose event type is missing or unknown
+     */
+    public record EmissionPlan(
+            List<Emission> toEmit, List<AggregatedLink> aggregatedAway, List<Long> invalidIds) {
+
+        public EmissionPlan {
+            toEmit = List.copyOf(toEmit);
+            aggregatedAway = List.copyOf(aggregatedAway);
+            invalidIds = List.copyOf(invalidIds);
+        }
+
+        public List<Long> inboxIdsToEmit() {
+            return toEmit.stream().map(Emission::inboxId).toList();
+        }
+    }
+
+    /** A row to process and emit, and the event type downstream must see for it. */
+    public record Emission(BookingConfirmationInboundMessage message, TradeEventType emitAs) {
+
+        public Long inboxId() {
+            return message.id();
+        }
+    }
+}
