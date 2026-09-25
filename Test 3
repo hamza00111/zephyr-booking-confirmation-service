@@ -13,48 +13,51 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StopWatch;
 
-import com.bnpparibas.dec.bookingconfirmation.processor.application.service.BookingConfirmationEmissionPlanner.EmissionPlan;
-import com.bnpparibas.dec.bookingconfirmation.processor.application.service.BookingConfirmationEmissionPlanner.Emission;
+import com.bnpparibas.dec.bookingconfirmation.processor.application.service.BookingConfirmationAggregationPlanner.BookingConfirmationAggregationPlan;
+import com.bnpparibas.dec.bookingconfirmation.processor.application.service.BookingConfirmationAggregationPlanner.BookingConfirmationToEmit;
 
 /**
  * Drains the NEW inbox rows of the owned partitions into outbox events, batch by batch:
  * claim, aggregate, fetch the survivors' payloads, process them in parallel, then persist every
  * status and the outbox inserts in one transaction.
  *
- * <p>Orchestration only. Deciding what to emit lives in {@link BookingConfirmationEmissionPlanner}, and per-row
- * work (filter, enrich, serialize) in {@link BookingConfirmationTradeProcessor}.
+ * <p>Orchestration only. Deciding what to emit lives in
+ * {@link BookingConfirmationAggregationPlanner}, and per-row work (filter, enrich, serialize) in
+ * {@link BookingConfirmationTradeProcessor}.
  */
 @Slf4j
-public class DefaultBookingConfirmationProcessService extends AbstractRegionScopedService {
+public class DefaultBookingConfirmationProcessService extends AbstractRegionScopedService
+        implements BookingConfirmationProcessService {
 
     private static final String INVALID_REASON = "No readable event type in payload";
     private static final String FAILURE_REASON = "Transform failed in PROCESS stage";
 
-    private final BookingConfirmationInboundRepository inboundRepository;
-    private final BookingConfirmationOutboundRepository outboundRepository;
+    private final InboundRepository inboundRepository;
+    private final OutboundRepository outboundRepository;
     private final TransactionTemplate transactionTemplate;
-    private final BookingConfirmationEmissionPlanner emissionPlanner;
+    private final BookingConfirmationAggregationPlanner aggregationPlanner;
     private final BookingConfirmationTradeProcessor tradeProcessor;
     private final BookingConfirmationProcessorMetricsSupport metrics;
     private final Executor processingExecutor;
     private final int batchSize;
 
     /**
-     * Keep your existing {@code super(...)} arguments. Inject {@code processingExecutor} with
-     * {@code @Qualifier("bookingConfirmationProcessingExecutor")}: Spring Boot also registers its own
-     * {@code applicationTaskExecutor}, so injection by type alone is ambiguous.
+     * @param processingExecutor inject with {@code @Qualifier("bookingConfirmationProcessingExecutor")}:
+     *                           Spring Boot also registers its own {@code applicationTaskExecutor}, so
+     *                           injection by type alone is ambiguous
      */
     public DefaultBookingConfirmationProcessService(
-            final Region region,
-            final BookingConfirmationInboundRepository inboundRepository,
-            final BookingConfirmationOutboundRepository outboundRepository,
+            final ProcessingScope scope,
+            final DefaultErrorHandlerSupport errorHandlerSupport,
+            final InboundRepository inboundRepository,
+            final OutboundRepository outboundRepository,
             final TransactionTemplate transactionTemplate,
-            final BookingConfirmationEmissionPlanner emissionPlanner,
+            final BookingConfirmationAggregationPlanner aggregationPlanner,
             final BookingConfirmationTradeProcessor tradeProcessor,
             final BookingConfirmationProcessorMetricsSupport metrics,
             final Executor processingExecutor,
             final int batchSize) {
-        super(region);
+        super(scope, errorHandlerSupport);
         if (batchSize <= 0) {
             // 0 would loop forever: an empty batch "claims" exactly batchSize rows
             throw new IllegalArgumentException("batchSize must be > 0, got " + batchSize);
@@ -62,7 +65,7 @@ public class DefaultBookingConfirmationProcessService extends AbstractRegionScop
         this.inboundRepository = inboundRepository;
         this.outboundRepository = outboundRepository;
         this.transactionTemplate = transactionTemplate;
-        this.emissionPlanner = emissionPlanner;
+        this.aggregationPlanner = aggregationPlanner;
         this.tradeProcessor = tradeProcessor;
         this.metrics = metrics;
         this.processingExecutor = processingExecutor;
@@ -96,7 +99,8 @@ public class DefaultBookingConfirmationProcessService extends AbstractRegionScop
             return BatchSummary.NONE;
         }
         // Aggregated from the event_type column only: rows that aggregate away are never fetched nor parsed.
-        final EmissionPlan plan = timed(stopWatch, "plan", () -> emissionPlanner.plan(claimed));
+        final BookingConfirmationAggregationPlan plan =
+                timed(stopWatch, "plan", () -> aggregationPlanner.plan(claimed));
         final Map<Long, String> payloads = timed(stopWatch, "fetchPayloads", () -> fetchPayloads(plan));
         final List<ProcessOutcome> outcomes =
                 timed(stopWatch, "process", () -> processInParallel(plan.toEmit(), payloads));
@@ -118,7 +122,7 @@ public class DefaultBookingConfirmationProcessService extends AbstractRegionScop
                 ignored -> inboundRepository.findNewAndMarkAsProcessing(region(), ownedPartitions, batchSize));
     }
 
-    private Map<Long, String> fetchPayloads(final EmissionPlan plan) {
+    private Map<Long, String> fetchPayloads(final BookingConfirmationAggregationPlan plan) {
         if (plan.toEmit().isEmpty()) {
             return Map.of(); // whole batch aggregated away or invalid: no round trip
         }
@@ -126,12 +130,13 @@ public class DefaultBookingConfirmationProcessService extends AbstractRegionScop
     }
 
     /** Submits every row first, then waits: results keep the plan order. */
-    private List<ProcessOutcome> processInParallel(final List<Emission> toEmit, final Map<Long, String> payloads) {
+    private List<ProcessOutcome> processInParallel(
+            final List<BookingConfirmationToEmit> toEmit, final Map<Long, String> payloads) {
         final List<CompletableFuture<ProcessOutcome>> inFlight = new ArrayList<>(toEmit.size());
-        for (final Emission emission : toEmit) {
-            final String rawPayload = payloads.get(emission.inboxId());
+        for (final BookingConfirmationToEmit rowToEmit : toEmit) {
+            final String rawPayload = payloads.get(rowToEmit.inboxId());
             inFlight.add(CompletableFuture.supplyAsync(
-                    () -> tradeProcessor.process(emission, rawPayload), processingExecutor));
+                    () -> tradeProcessor.process(rowToEmit, rawPayload), processingExecutor));
         }
         return inFlight.stream().map(CompletableFuture::join).toList();
     }
@@ -194,7 +199,7 @@ public class DefaultBookingConfirmationProcessService extends AbstractRegionScop
             List<Long> invalidIds,
             List<Long> failedIds) {
 
-        static BatchStatuses of(final EmissionPlan plan, final List<ProcessOutcome> outcomes) {
+        static BatchStatuses of(final BookingConfirmationAggregationPlan plan, final List<ProcessOutcome> outcomes) {
             final BatchStatuses statuses = new BatchStatuses(
                     new ArrayList<>(), new ArrayList<>(), new ArrayList<>(),
                     plan.aggregatedAway(), new ArrayList<>(plan.invalidIds()), new ArrayList<>());
