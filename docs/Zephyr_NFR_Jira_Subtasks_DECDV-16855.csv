@@ -1,0 +1,126 @@
+Issue Type,Summary,Parent,Description,Labels,Test Suite,Test Case,Category
+Sub-task,[NFR][TS-01][TC-01] Verify consistency between Booking Confirmation table and Kafka events,DECDV-16855,"Test Suite: TS-01
+Test Case: TC-01
+Category: Data Integrity
+
+Objective
+Verify consistency between Booking Confirmation table and Kafka events
+
+Steps / Expected Results
+1. Action: Start one Zephyr instance configured for 4 firms (GSS, CFL, KOP and SGP)
+   Expected: The instance starts successfully and all firms are loaded
+2. Action: Inject Trades and compare DB records with Kafka messages
+   Expected: Each DB record flagged as sent has the expected Kafka event",NFR;Zephyr,TS-01,TC-01,Data Integrity
+Sub-task,[NFR][TS-01][TC-02] Verify event ordering,DECDV-16855,"Test Suite: TS-01
+Test Case: TC-02
+Category: Data Integrity
+
+Objective
+Verify event ordering
+
+Steps / Expected Results
+1. Action: Start one Zephyr instance configured for 4 firms (GSS, CFL, KOP and SGP)
+   Expected: The instance starts successfully and all firms are loaded
+2. Action: Create, update and delete the same trade
+   Expected: Kafka events are published in the correct order and in the same Kafka partition",NFR;Zephyr,TS-01,TC-02,Data Integrity
+Sub-task,[NFR][TS-02][TC-01] Verify that the system can process the equivalent of one production business day of TDN trades while maintaining acceptable performance and resource utilization,DECDV-16855,"Test Suite: TS-02
+Test Case: TC-01
+Category: Performance
+
+Objective
+Verify that the system can process the equivalent of one production business day of TDN trades while maintaining acceptable performance and resource utilization
+
+Steps / Expected Results
+1. Action: Inject a workload equivalent to one production day for TDN accounts
+   Expected: All events are processed successfully
+2. Action: Measure transactions per second (TPS)
+   Expected: TPS meets or exceeds the target throughput
+3. Action: Monitor JVM memory consumption
+   Expected: Memory usage remains stable with no excessive garbage collection activity
+4. Action: Monitor Kafka topic growth and retention
+   Expected: Topic size remains within expected limits
+5. Action: Analyze database storage consumption (tables and indexes)
+   Expected: Database growth remains within expected capacity limits",NFR;Zephyr,TS-02,TC-01,Performance
+Sub-task,"[NFR][TS-02][TC-02] Verify that the system can process three times the daily production volume while maintaining stability, scalability, and data integrity",DECDV-16855,"Test Suite: TS-02
+Test Case: TC-02
+Category: Performance
+
+Objective
+Verify that the system can process three times the daily production volume while maintaining stability, scalability, and data integrity
+
+Steps / Expected Results
+1. Action: Inject a workload equivalent to three production day for TDN accounts
+   Expected: All events are processed successfully
+2. Action: Measure transactions per second (TPS)
+   Expected: Throughput scales appropriately under increased load
+3. Action: Monitor JVM memory consumption
+   Expected: No memory leaks or out-of-memory errors occur
+4. Action: Monitor Kafka topic growth and retention
+   Expected: Kafka remains stable and no partition issues occur
+5. Action: Analyze database storage consumption (tables and indexes)
+   Expected: Database performance remains within acceptable limits",NFR;Zephyr,TS-02,TC-02,Performance
+Sub-task,[NFR][TS-03][TC-01] Verify that a single Zephyr instance can process events for multiple firms while maintaining acceptable performance and resource utilization,DECDV-16855,"Test Suite: TS-03
+Test Case: TC-01
+Category: Scalability
+
+Objective
+Verify that a single Zephyr instance can process events for multiple firms while maintaining acceptable performance and resource utilization
+
+Steps / Expected Results
+1. Action: Start one Zephyr instance configured for 4 firms (GSS, CFL, KOP and SGP)
+   Expected: The instance starts successfully and all firms are loaded
+2. Action: Execute the completed functional test suite for all 4 firms simultaneously
+   Expected: All tests pass successfully with no performance degradation or processing errors",NFR;Zephyr,TS-03,TC-01,Scalability
+Sub-task,[NFR][TS-03][TC-02] Verify that multiple Zephyr instances can process workloads in parallel while maintaining data consistency and throughput,DECDV-16855,"Test Suite: TS-03
+Test Case: TC-02
+Category: Scalability
+
+Objective
+Verify that multiple Zephyr instances can process workloads in parallel while maintaining data consistency and throughput
+
+Steps / Expected Results
+3. Action: Start one Zephyr instance per firm (4 instances total)
+   Expected: All instances start successfully and connect to Kafka and the database
+4. Action: Execute the complete functional test suite for all firms
+   Expected: All trades and events are processed successfully without duplication or data inconsistency",NFR;Zephyr,TS-03,TC-02,Scalability
+Sub-task,[NFR][TS-04][TC-01] Verify that Zephyr remains operational during a database failover and continues processing events when a Kafka broker becomes unavailable,DECDV-16855,"Test Suite: TS-04
+Test Case: TC-01
+Category: Resiliency
+
+Objective
+Verify that Zephyr remains operational during a database failover and continues processing events when a Kafka broker becomes unavailable
+
+Steps / Expected Results
+1. Action: Start Zephyr with multiple broker Kafka cluster configured
+   Expected: Zephyr starts successfully and connects to the primary database
+2. Action: Stop one Kafka broker
+   Expected: Zephyr continues processing events without service interruption or data loss",NFR;Zephyr,TS-04,TC-01,Resiliency
+Sub-task,[NFR][TS-04][TC-02] Verify that Zephyr can recover from a Kafka outage and correctly process buffered events once Kafka becomes available again,DECDV-16855,"Test Suite: TS-04
+Test Case: TC-02
+Category: Resiliency
+
+Objective
+Verify that Zephyr can recover from a Kafka outage and correctly process buffered events once Kafka becomes available again
+
+Steps / Expected Results
+1. Action: Start Zephyr while Kafka is unavailable
+   Expected: Zephyr starts successfully and stores incoming events in the database
+2. Action: Inject trade events into the system
+   Expected: All trade related events are persisted without loss
+3. Action: Start the Kafka broker
+   Expected: All pending events are published to Kafka and processing resumes normally",NFR;Zephyr,TS-04,TC-02,Resiliency
+Sub-task,[NFR][TS-05][TC-01] Verify recovery after database failure,DECDV-16855,"Test Suite: TS-05
+Test Case: TC-01
+
+Objective
+Verify recovery after database failure
+
+Steps / Expected Results
+1. Action: Start Zephyr with Database failover mode enabled
+   Expected: Zephyr starts successfully and connects to the primary database
+2. Action: Stop the primary database instance
+   Expected: Zephyr detects the database failure and stops
+3. Action: Restart Zephyr
+   Expected: Zephyr automatically connects to the secondary database and resumes processing
+
+Note: The screenshot continues below the visible area; only the visible steps were reconstructed.",NFR;Zephyr,TS-05,TC-01,
