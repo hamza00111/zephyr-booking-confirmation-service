@@ -1,0 +1,76 @@
+<mxfile host="app.diagrams.net" modified="2026-10-27T00:00:00.000Z" agent="zephyr-docs" version="24.0.0" type="device">
+  <diagram name="Retry / requeue : a Kafka send keeps failing" id="retry-requeue-kafka-send-keeps-failing">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1340" pageHeight="386" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="Retry / requeue : a Kafka send keeps failing" style="text;html=1;align=left;verticalAlign=middle;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="20" y="10" width="900" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="lanerel" value="relay tick" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="60" width="160" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="lanedb" value="outbox table" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="460" y="60" width="160" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="lanerq" value="requeue tick" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="880" y="60" width="160" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="lifrel" value="" style="endArrow=none;dashed=1;html=1;strokeColor=#aaaaaa;strokeWidth=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="120" y="104" as="sourcePoint" />
+            <mxPoint x="120" y="366" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lifdb" value="" style="endArrow=none;dashed=1;html=1;strokeColor=#aaaaaa;strokeWidth=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="540" y="104" as="sourcePoint" />
+            <mxPoint x="540" y="366" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lifrq" value="" style="endArrow=none;dashed=1;html=1;strokeColor=#aaaaaa;strokeWidth=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="960" y="104" as="sourcePoint" />
+            <mxPoint x="960" y="366" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="se0" value="1. claim: NEW → SEND_IN_PROGRESS" style="endArrow=block;endFill=1;html=1;rounded=0;strokeWidth=1.5;strokeColor=#333333;fontSize=10;fontColor=#222222;align=center;verticalAlign=bottom;labelBackgroundColor=none;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="120" y="162" as="sourcePoint" />
+            <mxPoint x="540" y="162" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="se1" value="2. send (KAFKA)  FAILS" style="endArrow=block;endFill=1;html=1;rounded=0;strokeWidth=1.5;strokeColor=#333333;fontSize=10;fontColor=#222222;align=center;verticalAlign=bottom;labelBackgroundColor=none;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="120" y="194" as="sourcePoint" />
+            <mxPoint x="540" y="194" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="se2" value="3. SEND_IN_PROGRESS → SEND_FAILURE (retry_count+1)" style="endArrow=block;endFill=1;html=1;rounded=0;strokeWidth=1.5;strokeColor=#333333;fontSize=10;fontColor=#222222;align=center;verticalAlign=bottom;labelBackgroundColor=none;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="120" y="226" as="sourcePoint" />
+            <mxPoint x="540" y="226" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="se3" value="4. retry budget left?  YES → NEW ;  NO → RETRY_EXHAUSTED" style="endArrow=block;endFill=1;html=1;rounded=0;strokeWidth=1.5;strokeColor=#333333;fontSize=10;fontColor=#222222;align=center;verticalAlign=bottom;labelBackgroundColor=none;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="960" y="258" as="sourcePoint" />
+            <mxPoint x="540" y="258" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="se4" value="5. re-claim NEW → SEND_IN_PROGRESS ... (loop until SENT)" style="endArrow=block;endFill=1;html=1;rounded=0;strokeWidth=1.5;strokeColor=#333333;fontSize=10;fontColor=#222222;align=center;verticalAlign=bottom;labelBackgroundColor=none;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="120" y="290" as="sourcePoint" />
+            <mxPoint x="540" y="290" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="se5" value="6. crash recovery: stale SEND_IN_PROGRESS → NEW (no retry burn)" style="endArrow=block;endFill=1;html=1;rounded=0;strokeWidth=1.5;strokeColor=#333333;fontSize=10;fontColor=#222222;align=center;verticalAlign=bottom;labelBackgroundColor=none;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="960" y="322" as="sourcePoint" />
+            <mxPoint x="540" y="322" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
