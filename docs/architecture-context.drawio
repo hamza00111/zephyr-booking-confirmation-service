@@ -1,0 +1,75 @@
+<mxfile host="app.diagrams.net" modified="2026-10-27T00:00:00.000Z" agent="zephyr-docs" version="24.0.0" type="device">
+  <diagram name="Architecture - C4 context (L1)" id="architecture-c4-context-l1">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="700" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="z" value="Zephyr Booking Confirmation — 3 Spring Boot services (Kafka only, no direct service calls)" style="rounded=1;arcSize=2;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#666666;dashed=1;fontSize=13;fontStyle=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="360" y="40" width="840" height="610" as="geometry" />
+        </mxCell>
+        <mxCell id="kafka" value="Kafka cluster&#10;4 source + 3 region topics" style="rounded=1;arcSize=30;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="90" width="760" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="cap" value="capture-service" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="300" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="proc" value="processor-service" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="680" y="300" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="tdn" value="tdn-publisher-service" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="960" y="300" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ora" value="Zephyr Oracle schema&#10;inboxes/outboxes, locks,&#10;rules, checkpoints" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="400" y="520" width="760" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="ubix" value="Ubix back-office Oracle (KOP/GSS/CFL/SGP)&#10;read-only DB link" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="295" width="200" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="ops" value="DEC ops / on-call" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="115" y="70" width="50" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ldd" value="LDD reference DB&#10;IRIS_ACCOUNT_DICO / IRIS_SOURCE&#10;(read-only)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="280" width="220" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="nas" value="NAS: TDN file drop&#10;intraday + corrections CSV" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="520" width="220" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="actuator, mgmt REST,&#10;runbooks (SQL)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitDx=0;exitDy=0;exitY=0.5;entryX=0;entryDx=0;entryDy=0;entryY=0.115;" edge="1" parent="1" source="ops" target="z">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="SCN-polling Flashback VQ&#10;EOD bulk, T+1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitDx=0;exitDy=0;exitY=0.5;entryX=0;entryDx=0;entryDy=0;entryY=0.5;" edge="1" parent="1" source="ubix" target="cap">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="capture / relay / requeue" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitDx=0;exitDy=0;exitY=1;entryX=0.132;entryDx=0;entryDy=0;entryY=0;" edge="1" parent="1" source="cap" target="ora">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="1 topic per source&#10;(acks=all)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitDx=0;exitDy=0;exitY=0;entryX=0.132;entryDx=0;entryDy=0;entryY=1;" edge="1" parent="1" source="cap" target="kafka">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="1 internal topic&#10;per region" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.447;exitDx=0;exitDy=0;exitY=1;entryX=0.3;entryDx=0;entryDy=0;entryY=0;" edge="1" parent="1" source="kafka" target="proc">
+          <mxGeometry x="-0.4" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="staged/processed&#10;events, rules" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitDx=0;exitDy=0;exitY=1;entryX=0.500;entryDx=0;entryDy=0;entryY=0;" edge="1" parent="1" source="proc" target="ora">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="1 published topic&#10;per region" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.7;exitDx=0;exitDy=0;exitY=0;entryX=0.553;entryDx=0;entryDy=0;entryY=1;" edge="1" parent="1" source="proc" target="kafka">
+          <mxGeometry x="-0.4" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="1 topic per region" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.868;exitDx=0;exitDy=0;exitY=1;entryX=0.5;entryDx=0;entryDy=0;entryY=0;" edge="1" parent="1" source="kafka" target="tdn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" value="outgoing events&#10;+ publications" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitDx=0;exitDy=0;exitY=1;entryX=0.868;entryDx=0;entryDy=0;entryY=0;" edge="1" parent="1" source="tdn" target="ora">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" value="read-only&#10;account filter" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitDx=0;exitDy=0;exitY=0.25;entryX=0;entryDx=0;entryDy=0;entryY=0.5;" edge="1" parent="1" source="tdn" target="ldd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" value="atomic CSV rename" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitDx=0;exitDy=0;exitY=0.75;entryX=0;entryDx=0;entryDy=0;entryY=0.5;" edge="1" parent="1" source="tdn" target="nas">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1270" y="360" /><mxPoint x="1270" y="565" /></Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
