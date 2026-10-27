@@ -1,0 +1,125 @@
+<mxfile host="app.diagrams.net" modified="2026-10-27T00:00:00.000Z" agent="zephyr-docs" version="24.0.0" type="device">
+  <diagram name="Architecture - containers (L2)" id="architecture-containers-l2">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1810" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="c1" value="capture-service — 1 active writer per phase (DB lock-elected)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#444444;verticalAlign=top;align=left;spacingLeft=8;spacingTop=4;fontStyle=1;fontSize=11;container=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="760" height="410" as="geometry" />
+        </mxCell>
+        <mxCell id="cap1" value="Capture tick / source&#10;{S}_TICK_MS&#10;lock {SOURCE}.capture" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="c1">
+          <mxGeometry x="30" y="50" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="cap2" value="Relay tick / source&#10;CDC_RELAY_TICK_MS&#10;lock {SOURCE}.relay + CB gate" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="c1">
+          <mxGeometry x="30" y="140" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="cap3" value="Requeue tick (GLOBAL)&#10;CDC_RQUEUE_REQUEUE_MS&#10;lock _ALL_.requeue" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="c1">
+          <mxGeometry x="30" y="230" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="capman" value="Management REST&#10;/api/management/*" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;fontColor=#333333;" vertex="1" parent="c1">
+          <mxGeometry x="30" y="320" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="capdb" value="booking_confirmation_captured_event&#10;+ checkpoint / source_control&#10;+ referential_checkpoint / lock" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="c1">
+          <mxGeometry x="420" y="40" width="300" height="270" as="geometry" />
+        </mxCell>
+        <mxCell id="ksrc" value="Kafka source topics&#10;KOP | GSS | CFL | SGP" style="rounded=1;arcSize=40;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="70" y="490" width="330" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="c2" value="processor-service — N instances, partition-balanced" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#444444;verticalAlign=top;align=left;spacingLeft=8;spacingTop=4;fontStyle=1;fontSize=11;container=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="590" width="760" height="500" as="geometry" />
+        </mxCell>
+        <mxCell id="procin" value="Kafka ingest / region&#10;MANUAL_IMMEDIATE acks&#10;own consumer group" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="c2">
+          <mxGeometry x="30" y="50" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="procp" value="Process tick / region&#10;BC_PROCESS_TICK_MS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="c2">
+          <mxGeometry x="30" y="140" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="procr" value="Relay tick / region&#10;BC_RELAY_TICK_MS + CB gate" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="c2">
+          <mxGeometry x="30" y="230" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="procrq" value="Requeue tick / region&#10;BC_REQUEUE_TICK_MS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="c2">
+          <mxGeometry x="30" y="320" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="procman" value="Management REST&#10;cache + rules" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;fontColor=#333333;" vertex="1" parent="c2">
+          <mxGeometry x="30" y="410" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="procdb" value="staged_event / processed_event&#10;filter_rule / enrichment_rule" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="c2">
+          <mxGeometry x="420" y="40" width="300" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="kreg" value="Kafka region topics&#10;AMER | APAC | EMEA (published)" style="rounded=1;arcSize=40;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="70" y="1130" width="330" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" value="tdn-publisher-service — M instances; publish lock-elected" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#444444;verticalAlign=top;align=left;spacingLeft=8;spacingTop=4;fontStyle=1;fontSize=11;container=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1230" width="760" height="410" as="geometry" />
+        </mxCell>
+        <mxCell id="tdnin" value="Kafka ingest / region&#10;(own group)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="c3">
+          <mxGeometry x="30" y="50" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="tdnp" value="Process tick / region&#10;{R}_PROCESSOR_TICK_INTERVAL_MS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="c3">
+          <mxGeometry x="30" y="140" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="tdnman" value="No management REST (actuator only)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;fontColor=#333333;dashed=1;" vertex="1" parent="c3">
+          <mxGeometry x="30" y="230" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="tdnpu" value="Publish tick (GLOBAL, fixedRate)&#10;{flow} lock&#10;INTRADAY then AGED_CORRECTION" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="c3">
+          <mxGeometry x="30" y="320" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="tdndb" value="outgoing_event&#10;publication&#10;+ lock rows (shared)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="c3">
+          <mxGeometry x="420" y="40" width="300" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="nas" value="NAS file drop" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="70" y="1700" width="330" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.167;entryDx=0;entryDy=0;" edge="1" parent="1" source="cap1" target="capdb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.500;entryDx=0;entryDy=0;" edge="1" parent="1" source="cap2" target="capdb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.833;entryDx=0;entryDy=0;" edge="1" parent="1" source="cap3" target="capdb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.125;entryDx=0;entryDy=0;" edge="1" parent="1" source="procin" target="procdb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.375;entryDx=0;entryDy=0;" edge="1" parent="1" source="procp" target="procdb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.625;entryDx=0;entryDy=0;" edge="1" parent="1" source="procr" target="procdb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.875;entryDx=0;entryDy=0;" edge="1" parent="1" source="procrq" target="procdb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.125;entryDx=0;entryDy=0;" edge="1" parent="1" source="tdnin" target="tdndb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.375;entryDx=0;entryDy=0;" edge="1" parent="1" source="tdnp" target="tdndb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.875;entryDx=0;entryDy=0;" edge="1" parent="1" source="tdnpu" target="tdndb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" value="relay sends" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="capdb" target="ksrc">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="610" y="520" /></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e12" value="relay sends" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="procdb" target="kreg">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="610" y="1160" /></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ksrc" target="procin">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="kreg" target="tdnin">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e15" value="atomic rename" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="tdnpu" target="nas">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
