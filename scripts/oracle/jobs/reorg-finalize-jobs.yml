@@ -6,7 +6,7 @@
 # quiet window, after reorg-compact. A table whose lock is not obtained within 60s is reported FAILED and retried
 # at the next run; the other tables still run.
 # One line per table in the job output:
-#   DB_JOB_OUTPUT job=reorg-finalize table=<table> status=<OK|FAILED> elapsed_s=<n>
+#   DB_JOB_OUTPUT job=reorg-finalize table=<table> status=<OK|FAILED> durationMs=<n>
 # Needs ALTER on each event table, granted directly to ZEPHYR_ADMIN by the owner (see README.md).
 datasource:
   url: ${ZEPHYR_ADMIN_DB_URL}

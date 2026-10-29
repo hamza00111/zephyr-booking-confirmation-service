@@ -20,8 +20,13 @@
 --
 --  Each table is processed independently: a failure (e.g. ORA-00054 lock
 --  timeout) is reported and the next table still runs; the call raises at
---  the end so the job is marked failed. One line per table in the output:
---    DB_JOB_OUTPUT job=<job> table=<table> status=<OK|FAILED> elapsed_s=<n> [error="..."]
+--  the end so the job is marked failed. One DBMS_OUTPUT line per table;
+--  the job CLI prefixes it with "DB_JOB_OUTPUT job=<job>":
+--    table=<table> status=<OK|FAILED> durationMs=<n> [error="..."]
+--
+--  p_compact shrinks the tables only: COMPACT is not supported for
+--  SecureFile LOBs (ORA-10695), so indexes and LOBs are shrunk by the
+--  SHRINK SPACE CASCADE of p_finalize.
 --
 --  Statistics are NOT gathered: DBMS_STATS on another schema's tables
 --  needs ANALYZE ANY (database-wide). After a shrink only the block count
@@ -53,23 +58,29 @@ CREATE OR REPLACE PACKAGE BODY pkg_reorg AS
         || '.' || DBMS_ASSERT.ENQUOTE_NAME(p_table);
   END tab;
 
-  PROCEDURE emit(p_job    IN VARCHAR2,
-                 p_table  IN VARCHAR2,
+  FUNCTION ms_since(p_start IN TIMESTAMP WITH TIME ZONE) RETURN NUMBER IS
+    l INTERVAL DAY(9) TO SECOND(3) := SYSTIMESTAMP - p_start;
+  BEGIN
+    RETURN ROUND((EXTRACT(DAY FROM l) * 86400 + EXTRACT(HOUR FROM l) * 3600
+                + EXTRACT(MINUTE FROM l) * 60 + EXTRACT(SECOND FROM l)) * 1000);
+  END ms_since;
+
+  -- The job CLI prefixes each line with "DB_JOB_OUTPUT job=<job>"
+  PROCEDURE emit(p_table  IN VARCHAR2,
                  p_status IN VARCHAR2,
-                 p_start  IN DATE,
+                 p_start  IN TIMESTAMP WITH TIME ZONE,
                  p_error  IN VARCHAR2 DEFAULT NULL) IS
   BEGIN
-    DBMS_OUTPUT.PUT_LINE('DB_JOB_OUTPUT job=' || p_job
-      || ' table=' || p_table
+    DBMS_OUTPUT.PUT_LINE('table=' || p_table
       || ' status=' || p_status
-      || ' elapsed_s=' || ROUND((SYSDATE - p_start) * 86400)
+      || ' durationMs=' || ms_since(p_start)
       || CASE WHEN p_error IS NOT NULL
               THEN ' error="' || REPLACE(p_error, CHR(10), ' ') || '"' END);
   END emit;
 
   PROCEDURE process(p_job IN VARCHAR2, p_owner IN VARCHAR2, p_finalize IN BOOLEAN) IS
     l_table  VARCHAR2(300);
-    l_start  DATE;
+    l_start  TIMESTAMP WITH TIME ZONE;
     l_failed PLS_INTEGER := 0;
     l_unusable PLS_INTEGER;
   BEGIN
@@ -77,7 +88,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_reorg AS
     EXECUTE IMMEDIATE 'ALTER SESSION SET ddl_lock_timeout = 60';
 
     FOR i IN 1 .. c_tables.COUNT LOOP
-      l_start := SYSDATE;
+      l_start := SYSTIMESTAMP;
       BEGIN
         l_table := tab(p_owner, c_tables(i));
         IF p_finalize THEN
@@ -85,13 +96,13 @@ CREATE OR REPLACE PACKAGE BODY pkg_reorg AS
           EXECUTE IMMEDIATE 'ALTER TABLE ' || l_table || ' DISABLE ROW MOVEMENT';
         ELSE
           EXECUTE IMMEDIATE 'ALTER TABLE ' || l_table || ' ENABLE ROW MOVEMENT';
-          EXECUTE IMMEDIATE 'ALTER TABLE ' || l_table || ' SHRINK SPACE COMPACT CASCADE';
+          EXECUTE IMMEDIATE 'ALTER TABLE ' || l_table || ' SHRINK SPACE COMPACT';
         END IF;
-        emit(p_job, c_tables(i), 'OK', l_start);
+        emit(c_tables(i), 'OK', l_start);
       EXCEPTION
         WHEN OTHERS THEN
           l_failed := l_failed + 1;
-          emit(p_job, c_tables(i), 'FAILED', l_start, SQLERRM);
+          emit(c_tables(i), 'FAILED', l_start, SQLERRM);
       END;
     END LOOP;
 

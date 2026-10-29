@@ -62,7 +62,7 @@ CREATE OR REPLACE PACKAGE BODY &owner..reorg_maint AS
     run('ALTER SESSION SET ddl_lock_timeout = 60');
     FOR i IN 1 .. c_tables.COUNT LOOP
       run('ALTER TABLE ' || q(c_tables(i)) || ' ENABLE ROW MOVEMENT');
-      run('ALTER TABLE ' || q(c_tables(i)) || ' SHRINK SPACE COMPACT CASCADE');
+      run('ALTER TABLE ' || q(c_tables(i)) || ' SHRINK SPACE COMPACT');
     END LOOP;
   END compact;
 
