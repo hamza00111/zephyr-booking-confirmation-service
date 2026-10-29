@@ -1,0 +1,19 @@
+# Online reorg (phase 1) of the BOOKING_CONFIRMATION event tables, run by zephyr-framework-db-job-cli connected as ZEPHYR_ADMIN:
+#   java -jar zephyr-framework-db-job-cli.jar --config=reorg-compact-jobs.yml run
+#
+# ZEPHYR_ADMIN.pkg_reorg.p_compact moves rows to the start of each event table (SHRINK SPACE COMPACT CASCADE).
+# Row locks only: safe with traffic. Schedule it off-peak because of the extra I/O and redo.
+# One line per table in the job output:
+#   DB_JOB_OUTPUT job=reorg-compact table=<table> status=<OK|FAILED> elapsed_s=<n>
+# Needs ALTER on each event table, granted directly to ZEPHYR_ADMIN by the owner (see README.md).
+datasource:
+  url: ${ZEPHYR_ADMIN_DB_URL}
+  user: ${ZEPHYR_ADMIN_DB_USERNAME}
+  password: ${ZEPHYR_ADMIN_DB_PASSWORD}
+defaults:
+  timeout: PT4H            # first run on a large backlog can be long
+  continueOnError: true
+jobs:
+  - name: reorg-compact
+    procedure: pkg_reorg.p_compact
+    parameters: { p_owner: ${owner} }

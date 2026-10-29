@@ -3,34 +3,37 @@
 -- =====================================================================
 --  PKG_REORG - online shrink of the booking confirmation event tables
 --
---  Goes in the ZEPHYR_ADMIN changelog, next to PKG_ARCHIVE and
---  PKG_PROCESS_LOG. ZEPHYR_ADMIN owns and runs the package; the tables
---  live in another schema, passed as a parameter:
---    local      : EXEC pkg_reorg.compact('ZEPHYR')
---    other envs : EXEC pkg_reorg.compact('BOOKING_CONFIRMATION')
+--  Goes in the ZEPHYR_ADMIN (admin) changelog, next to PKG_ARCHIVE and
+--  PKG_PROCESS_LOG, and is run by zephyr-framework-db-job-cli connected
+--  as ZEPHYR_ADMIN (see jobs/reorg-compact-jobs.yml and
+--  jobs/reorg-finalize-jobs.yml). The tables live in the owner schema
+--  passed as p_owner: ZEPHYR locally, BOOKING_CONFIRMATION elsewhere.
 --
 --  Privileges: ZEPHYR_ADMIN needs ALTER on each table, granted DIRECTLY
---  by the table owner (see pkg_reorg_grants.changelog.sql). Grants through
---  a role do not work: roles are disabled inside stored PL/SQL.
+--  by the table owner (pkg_reorg_grants.changelog.sql). ALTER is an
+--  object privilege, so the DDL works cross-schema; grants through a
+--  role do not, because roles are disabled inside stored PL/SQL.
 --
---  compact  - online, row locks only. Safe with traffic.
---  finalize - brief exclusive lock per table while the high-water mark
---             drops. Quiet window. Raises an error if an index is left
---             unusable, so the scheduler marks the run as failed.
+--  p_compact  - online, row locks only. Safe with traffic.
+--  p_finalize - brief exclusive lock per table while the high-water mark
+--               drops. Quiet window.
 --
---  Statistics are NOT gathered here: DBMS_STATS on another schema's
---  tables needs ANALYZE ANY (database-wide). After a shrink only the
---  block count is outdated, which makes full scans look costlier and
---  does not hurt index-driven access. If ANALYZE ANY is granted to
---  ZEPHYR_ADMIN, add DBMS_STATS.GATHER_TABLE_STATS in finalize.
+--  Each table is processed independently: a failure (e.g. ORA-00054 lock
+--  timeout) is reported and the next table still runs; the call raises at
+--  the end so the job is marked failed. One line per table in the output:
+--    DB_JOB_OUTPUT job=<job> table=<table> status=<OK|FAILED> elapsed_s=<n> [error="..."]
+--
+--  Statistics are NOT gathered: DBMS_STATS on another schema's tables
+--  needs ANALYZE ANY (database-wide). After a shrink only the block count
+--  is outdated, which does not hurt index-driven access.
 -- =====================================================================
 
 --changeset hamza:pkg-reorg-spec runOnChange:true splitStatements:false
 CREATE OR REPLACE PACKAGE pkg_reorg AS
   -- Online: moves rows to the start of each segment, row locks only.
-  PROCEDURE compact(p_owner IN VARCHAR2);
+  PROCEDURE p_compact(p_owner IN VARCHAR2);
   -- Quiet window: lowers the high-water mark and releases the space.
-  PROCEDURE finalize(p_owner IN VARCHAR2);
+  PROCEDURE p_finalize(p_owner IN VARCHAR2);
 END pkg_reorg;
 --rollback DROP PACKAGE pkg_reorg;
 
@@ -43,12 +46,6 @@ CREATE OR REPLACE PACKAGE BODY pkg_reorg AS
     'BOOKING_CONFIRMATION_PROCESSED_EVENT',
     'BOOKING_CONFIRMATION_CAPTURED_EVENT');
 
-  PROCEDURE run(p_sql IN VARCHAR2) IS
-  BEGIN
-    DBMS_OUTPUT.PUT_LINE(TO_CHAR(SYSTIMESTAMP, 'HH24:MI:SS') || '  ' || p_sql);
-    EXECUTE IMMEDIATE p_sql;
-  END run;
-
   -- "OWNER"."TABLE"; SCHEMA_NAME fails if the schema does not exist
   FUNCTION tab(p_owner IN VARCHAR2, p_table IN VARCHAR2) RETURN VARCHAR2 IS
   BEGIN
@@ -56,33 +53,74 @@ CREATE OR REPLACE PACKAGE BODY pkg_reorg AS
         || '.' || DBMS_ASSERT.ENQUOTE_NAME(p_table);
   END tab;
 
-  PROCEDURE compact(p_owner IN VARCHAR2) IS
+  PROCEDURE emit(p_job    IN VARCHAR2,
+                 p_table  IN VARCHAR2,
+                 p_status IN VARCHAR2,
+                 p_start  IN DATE,
+                 p_error  IN VARCHAR2 DEFAULT NULL) IS
   BEGIN
-    run('ALTER SESSION SET ddl_lock_timeout = 60');
-    FOR i IN 1 .. c_tables.COUNT LOOP
-      run('ALTER TABLE ' || tab(p_owner, c_tables(i)) || ' ENABLE ROW MOVEMENT');
-      run('ALTER TABLE ' || tab(p_owner, c_tables(i)) || ' SHRINK SPACE COMPACT CASCADE');
-    END LOOP;
-  END compact;
+    DBMS_OUTPUT.PUT_LINE('DB_JOB_OUTPUT job=' || p_job
+      || ' table=' || p_table
+      || ' status=' || p_status
+      || ' elapsed_s=' || ROUND((SYSDATE - p_start) * 86400)
+      || CASE WHEN p_error IS NOT NULL
+              THEN ' error="' || REPLACE(p_error, CHR(10), ' ') || '"' END);
+  END emit;
 
-  PROCEDURE finalize(p_owner IN VARCHAR2) IS
-    n PLS_INTEGER;
+  PROCEDURE process(p_job IN VARCHAR2, p_owner IN VARCHAR2, p_finalize IN BOOLEAN) IS
+    l_table  VARCHAR2(300);
+    l_start  DATE;
+    l_failed PLS_INTEGER := 0;
+    l_unusable PLS_INTEGER;
   BEGIN
-    run('ALTER SESSION SET ddl_lock_timeout = 60');
+    -- Wait up to 60s for locks instead of failing at once with ORA-00054
+    EXECUTE IMMEDIATE 'ALTER SESSION SET ddl_lock_timeout = 60';
+
     FOR i IN 1 .. c_tables.COUNT LOOP
-      run('ALTER TABLE ' || tab(p_owner, c_tables(i)) || ' SHRINK SPACE CASCADE');
-      run('ALTER TABLE ' || tab(p_owner, c_tables(i)) || ' DISABLE ROW MOVEMENT');
+      l_start := SYSDATE;
+      BEGIN
+        l_table := tab(p_owner, c_tables(i));
+        IF p_finalize THEN
+          EXECUTE IMMEDIATE 'ALTER TABLE ' || l_table || ' SHRINK SPACE CASCADE';
+          EXECUTE IMMEDIATE 'ALTER TABLE ' || l_table || ' DISABLE ROW MOVEMENT';
+        ELSE
+          EXECUTE IMMEDIATE 'ALTER TABLE ' || l_table || ' ENABLE ROW MOVEMENT';
+          EXECUTE IMMEDIATE 'ALTER TABLE ' || l_table || ' SHRINK SPACE COMPACT CASCADE';
+        END IF;
+        emit(p_job, c_tables(i), 'OK', l_start);
+      EXCEPTION
+        WHEN OTHERS THEN
+          l_failed := l_failed + 1;
+          emit(p_job, c_tables(i), 'FAILED', l_start, SQLERRM);
+      END;
     END LOOP;
 
-    SELECT COUNT(*) INTO n
-      FROM all_indexes
-     WHERE table_owner = UPPER(p_owner)
-       AND table_name IN (SELECT column_value FROM TABLE(c_tables))
-       AND status NOT IN ('VALID', 'N/A');
-    IF n > 0 THEN
-      RAISE_APPLICATION_ERROR(-20010, n || ' unusable index(es) after reorg');
+    IF p_finalize THEN
+      -- ALL_INDEXES.STATUS is VALID or UNUSABLE (N/A for partitioned indexes)
+      SELECT COUNT(*) INTO l_unusable
+        FROM all_indexes
+       WHERE table_owner = UPPER(p_owner)
+         AND table_name IN (SELECT column_value FROM TABLE(c_tables))
+         AND status = 'UNUSABLE';
+      IF l_unusable > 0 THEN
+        RAISE_APPLICATION_ERROR(-20010, l_unusable || ' unusable index(es) after ' || p_job);
+      END IF;
     END IF;
-  END finalize;
+
+    IF l_failed > 0 THEN
+      RAISE_APPLICATION_ERROR(-20011, l_failed || ' table(s) failed in ' || p_job);
+    END IF;
+  END process;
+
+  PROCEDURE p_compact(p_owner IN VARCHAR2) IS
+  BEGIN
+    process('reorg-compact', p_owner, p_finalize => FALSE);
+  END p_compact;
+
+  PROCEDURE p_finalize(p_owner IN VARCHAR2) IS
+  BEGIN
+    process('reorg-finalize', p_owner, p_finalize => TRUE);
+  END p_finalize;
 
 END pkg_reorg;
 --rollback DROP PACKAGE BODY pkg_reorg;

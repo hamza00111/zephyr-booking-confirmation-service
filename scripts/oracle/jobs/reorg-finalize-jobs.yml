@@ -1,0 +1,21 @@
+# Reorg finalize (phase 2) of the BOOKING_CONFIRMATION event tables, run by zephyr-framework-db-job-cli connected as ZEPHYR_ADMIN:
+#   java -jar zephyr-framework-db-job-cli.jar --config=reorg-finalize-jobs.yml run
+#
+# ZEPHYR_ADMIN.pkg_reorg.p_finalize lowers the high-water mark of each event table and releases the space
+# compacted by reorg-compact (SHRINK SPACE CASCADE). Takes a brief exclusive lock per table: schedule it in the
+# quiet window, after reorg-compact. A table whose lock is not obtained within 60s is reported FAILED and retried
+# at the next run; the other tables still run.
+# One line per table in the job output:
+#   DB_JOB_OUTPUT job=reorg-finalize table=<table> status=<OK|FAILED> elapsed_s=<n>
+# Needs ALTER on each event table, granted directly to ZEPHYR_ADMIN by the owner (see README.md).
+datasource:
+  url: ${ZEPHYR_ADMIN_DB_URL}
+  user: ${ZEPHYR_ADMIN_DB_USERNAME}
+  password: ${ZEPHYR_ADMIN_DB_PASSWORD}
+defaults:
+  timeout: PT1H
+  continueOnError: true
+jobs:
+  - name: reorg-finalize
+    procedure: pkg_reorg.p_finalize
+    parameters: { p_owner: ${owner} }
