@@ -13,14 +13,8 @@ ALTER TABLE archive_table MODIFY archive_table_name NULL;
 ALTER TABLE archive_retention MODIFY archive_after_days NULL;
 --rollback ALTER TABLE archive_retention MODIFY archive_after_days NOT NULL;
 
---changeset j24720:ck_archive_table_condition
--- archive_condition stays required for an archived table: it selects the rows in a final status.
-ALTER TABLE archive_table ADD CONSTRAINT ck_archive_table_condition
-    CHECK (archive_table_name IS NULL OR archive_condition IS NOT NULL);
---rollback ALTER TABLE archive_table DROP CONSTRAINT ck_archive_table_condition;
-
 --changeset j24720:archive_table_condition_nullable
--- archive_condition is optional for a purge-only table: without it, every row whose date_column is at least
--- purge_after_days days old is deleted.
+-- archive_condition is optional: it is an extra filter (e.g. on the status) on top of the date_column one, which always
+-- applies. Without it, every row whose date_column is old enough is archived (or deleted for a purge-only table).
 ALTER TABLE archive_table MODIFY archive_condition NULL;
 --rollback ALTER TABLE archive_table MODIFY archive_condition NOT NULL;
