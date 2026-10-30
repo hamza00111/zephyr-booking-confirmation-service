@@ -10,7 +10,7 @@ CREATE OR REPLACE PACKAGE pkg_archive AS
     --      (all columns shared with the archive table) to archive_table_name, by batches of batch_size;
     --   2. rows of the archive table archived at least purge_after_days days ago are deleted, by batches.
     -- A purge-only table (archive_table_name NULL) skips step 1; step 2 deletes, from the table itself, the rows
-    -- matching archive_condition whose date_column is at least purge_after_days days old.
+    -- matching archive_condition (every row when it is empty) whose date_column is at least purge_after_days days old.
     -- Every step is logged in process_log. A failing table/scope is rolled back, logged and skipped; the call then
     -- ends with ORA-20010 so that the caller (db job runner) reports the failure.
     -- Requires direct grants to the package owner: SELECT, DELETE on the tables, SELECT, INSERT, DELETE on the archives.
@@ -94,11 +94,15 @@ CREATE OR REPLACE PACKAGE BODY pkg_archive AS
     -- archive_condition is concatenated into the archive query. Reject what could end or neutralise the rest of the
     -- query (statement separator, comments), then check that it parses as a predicate on the table: parse only,
     -- nothing is executed. Unknown columns / syntax errors are reported with the Oracle message.
+    -- It may be empty only for a purge-only table.
     PROCEDURE check_condition(p_cfg IN archive_table%ROWTYPE) IS
         l_cursor INTEGER;
     BEGIN
         IF TRIM(p_cfg.archive_condition) IS NULL THEN
-            RAISE_APPLICATION_ERROR(-20013, 'archive_condition is empty');
+            IF p_cfg.archive_table_name IS NULL THEN
+                RETURN;
+            END IF;
+            RAISE_APPLICATION_ERROR(-20013, 'archive_condition is empty, it is required when archive_table_name is set');
         END IF;
         IF INSTR(p_cfg.archive_condition, ';') > 0 OR INSTR(p_cfg.archive_condition, '--') > 0
             OR INSTR(p_cfg.archive_condition, '/*') > 0 THEN
@@ -243,10 +247,11 @@ CREATE OR REPLACE PACKAGE BODY pkg_archive AS
     BEGIN
         o_purged := 0;
         IF p_cfg.archive_table_name IS NULL THEN
-            -- purge-only table: its own rows in a final status, by date_column
+            -- purge-only table: its own rows matching archive_condition (all rows when it is empty), by date_column
             l_delete := 'DELETE FROM ' || qualified(p_cfg.owner, p_cfg.table_name) || ' x'
-                || ' WHERE (' || p_cfg.archive_condition || ')'
-                || ' AND x.' || quote(p_cfg.date_column) || ' < TRUNC(SYSDATE) - :purge_after_days + 1';
+                || ' WHERE x.' || quote(p_cfg.date_column) || ' < TRUNC(SYSDATE) - :purge_after_days + 1'
+                || CASE WHEN TRIM(p_cfg.archive_condition) IS NOT NULL
+                        THEN ' AND (' || p_cfg.archive_condition || ')' END;
         ELSE
             l_delete := 'DELETE FROM ' || qualified(p_cfg.owner, p_cfg.archive_table_name) || ' x'
                 || ' WHERE x.ARCHIVED_AT < TRUNC(SYSDATE) - :purge_after_days + 1';

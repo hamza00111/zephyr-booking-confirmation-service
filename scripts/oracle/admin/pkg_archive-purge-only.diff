@@ -5,21 +5,39 @@
      --      (all columns shared with the archive table) to archive_table_name, by batches of batch_size;
      --   2. rows of the archive table archived at least purge_after_days days ago are deleted, by batches.
 +    -- A purge-only table (archive_table_name NULL) skips step 1; step 2 deletes, from the table itself, the rows
-+    -- matching archive_condition whose date_column is at least purge_after_days days old.
++    -- matching archive_condition (every row when it is empty) whose date_column is at least purge_after_days days old.
      -- Every step is logged in process_log. A failing table/scope is rolled back, logged and skipped; the call then
      -- ends with ORA-20010 so that the caller (db job runner) reports the failure.
      -- Requires direct grants to the package owner: SELECT, DELETE on the tables, SELECT, INSERT, DELETE on the archives.
-@@ -240,8 +242,16 @@
+@@ -92,11 +94,15 @@
+     -- archive_condition is concatenated into the archive query. Reject what could end or neutralise the rest of the
+     -- query (statement separator, comments), then check that it parses as a predicate on the table: parse only,
+     -- nothing is executed. Unknown columns / syntax errors are reported with the Oracle message.
++    -- It may be empty only for a purge-only table.
+     PROCEDURE check_condition(p_cfg IN archive_table%ROWTYPE) IS
+         l_cursor INTEGER;
+     BEGIN
+         IF TRIM(p_cfg.archive_condition) IS NULL THEN
+-            RAISE_APPLICATION_ERROR(-20013, 'archive_condition is empty');
++            IF p_cfg.archive_table_name IS NULL THEN
++                RETURN;
++            END IF;
++            RAISE_APPLICATION_ERROR(-20013, 'archive_condition is empty, it is required when archive_table_name is set');
+         END IF;
+         IF INSTR(p_cfg.archive_condition, ';') > 0 OR INSTR(p_cfg.archive_condition, '--') > 0
+             OR INSTR(p_cfg.archive_condition, '/*') > 0 THEN
+@@ -240,8 +246,17 @@
          l_deleted NUMBER;
      BEGIN
          o_purged := 0;
 -        l_delete := 'DELETE FROM ' || qualified(p_cfg.owner, p_cfg.archive_table_name) || ' x'
 -            || ' WHERE x.ARCHIVED_AT < TRUNC(SYSDATE) - :purge_after_days + 1'
 +        IF p_cfg.archive_table_name IS NULL THEN
-+            -- purge-only table: its own rows in a final status, by date_column
++            -- purge-only table: its own rows matching archive_condition (all rows when it is empty), by date_column
 +            l_delete := 'DELETE FROM ' || qualified(p_cfg.owner, p_cfg.table_name) || ' x'
-+                || ' WHERE (' || p_cfg.archive_condition || ')'
-+                || ' AND x.' || quote(p_cfg.date_column) || ' < TRUNC(SYSDATE) - :purge_after_days + 1';
++                || ' WHERE x.' || quote(p_cfg.date_column) || ' < TRUNC(SYSDATE) - :purge_after_days + 1'
++                || CASE WHEN TRIM(p_cfg.archive_condition) IS NOT NULL
++                        THEN ' AND (' || p_cfg.archive_condition || ')' END;
 +        ELSE
 +            l_delete := 'DELETE FROM ' || qualified(p_cfg.owner, p_cfg.archive_table_name) || ' x'
 +                || ' WHERE x.ARCHIVED_AT < TRUNC(SYSDATE) - :purge_after_days + 1';
@@ -28,7 +46,7 @@
              || scope_predicate(p_cfg, p_mode)
              || ' AND ROWNUM <= :batch_size';
          set_sql(l_delete || ';', ':purge_after_days=' || p_ret.purge_after_days || scope_binds(p_cfg, p_ret, p_mode)
-@@ -261,18 +271,24 @@
+@@ -261,18 +276,24 @@
          END LOOP;
      END purge_rows;
  
@@ -57,7 +75,7 @@
          RETURN common_columns(p_cfg, p_run_id);
      END prepare_table;
  
-@@ -351,6 +367,15 @@
+@@ -351,6 +372,15 @@
                      FOR r IN 1 .. l_retentions.COUNT
                          LOOP
                              BEGIN
@@ -73,7 +91,7 @@
                                  IF l_tables(t).scope_column IS NULL THEN
                                      IF l_retentions(r).scope_value <> c_all_scopes THEN
                                          RAISE_APPLICATION_ERROR(-20016,
-@@ -363,21 +388,26 @@
+@@ -363,21 +393,26 @@
                                      l_mode := c_scope_value;
                                  END IF;
  
