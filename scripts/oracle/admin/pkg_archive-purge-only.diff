@@ -1,0 +1,112 @@
+--- release-2026.10.2/packages/02-pkg_archive.sql
++++ release-2026.11.1/packages/01-pkg_archive.sql
+@@ -9,6 +9,8 @@
+     --   1. rows matching archive_condition and whose date_column is at least archive_after_days days old are moved
+     --      (all columns shared with the archive table) to archive_table_name, by batches of batch_size;
+     --   2. rows of the archive table archived at least purge_after_days days ago are deleted, by batches.
++    -- A purge-only table (archive_table_name NULL) skips step 1; step 2 deletes, from the table itself, the rows
++    -- matching archive_condition whose date_column is at least purge_after_days days old.
+     -- Every step is logged in process_log. A failing table/scope is rolled back, logged and skipped; the call then
+     -- ends with ORA-20010 so that the caller (db job runner) reports the failure.
+     -- Requires direct grants to the package owner: SELECT, DELETE on the tables, SELECT, INSERT, DELETE on the archives.
+@@ -240,8 +242,16 @@
+         l_deleted NUMBER;
+     BEGIN
+         o_purged := 0;
+-        l_delete := 'DELETE FROM ' || qualified(p_cfg.owner, p_cfg.archive_table_name) || ' x'
+-            || ' WHERE x.ARCHIVED_AT < TRUNC(SYSDATE) - :purge_after_days + 1'
++        IF p_cfg.archive_table_name IS NULL THEN
++            -- purge-only table: its own rows in a final status, by date_column
++            l_delete := 'DELETE FROM ' || qualified(p_cfg.owner, p_cfg.table_name) || ' x'
++                || ' WHERE (' || p_cfg.archive_condition || ')'
++                || ' AND x.' || quote(p_cfg.date_column) || ' < TRUNC(SYSDATE) - :purge_after_days + 1';
++        ELSE
++            l_delete := 'DELETE FROM ' || qualified(p_cfg.owner, p_cfg.archive_table_name) || ' x'
++                || ' WHERE x.ARCHIVED_AT < TRUNC(SYSDATE) - :purge_after_days + 1';
++        END IF;
++        l_delete := l_delete
+             || scope_predicate(p_cfg, p_mode)
+             || ' AND ROWNUM <= :batch_size';
+         set_sql(l_delete || ';', ':purge_after_days=' || p_ret.purge_after_days || scope_binds(p_cfg, p_ret, p_mode)
+@@ -261,18 +271,24 @@
+         END LOOP;
+     END purge_rows;
+ 
+-    -- Validates the configuration of one table against the dictionary; returns the column list to archive.
++    -- Validates the configuration of one table against the dictionary; returns the column list to archive (NULL for a
++    -- purge-only table).
+     FUNCTION prepare_table(p_cfg IN archive_table%ROWTYPE, p_run_id IN VARCHAR2) RETURN VARCHAR2 IS
+     BEGIN
+         require_table(p_cfg.owner, p_cfg.table_name);
+-        require_table(p_cfg.owner, p_cfg.archive_table_name);
+         require_column(p_cfg.owner, p_cfg.table_name, p_cfg.date_column);
+-        require_column(p_cfg.owner, p_cfg.archive_table_name, 'ARCHIVED_AT');
+         IF p_cfg.scope_column IS NOT NULL THEN
+             require_column(p_cfg.owner, p_cfg.table_name, p_cfg.scope_column);
+-            require_column(p_cfg.owner, p_cfg.archive_table_name, p_cfg.scope_column);
+         END IF;
+         check_condition(p_cfg);
++        IF p_cfg.archive_table_name IS NULL THEN
++            RETURN NULL;
++        END IF;
++        require_table(p_cfg.owner, p_cfg.archive_table_name);
++        require_column(p_cfg.owner, p_cfg.archive_table_name, 'ARCHIVED_AT');
++        IF p_cfg.scope_column IS NOT NULL THEN
++            require_column(p_cfg.owner, p_cfg.archive_table_name, p_cfg.scope_column);
++        END IF;
+         RETURN common_columns(p_cfg, p_run_id);
+     END prepare_table;
+ 
+@@ -351,6 +367,15 @@
+                     FOR r IN 1 .. l_retentions.COUNT
+                         LOOP
+                             BEGIN
++                                IF l_tables(t).archive_table_name IS NULL
++                                    AND l_retentions(r).archive_after_days IS NOT NULL THEN
++                                    RAISE_APPLICATION_ERROR(-20019,
++                                                            'Table has no archive_table_name (purge only), archive_after_days must be NULL');
++                                ELSIF l_tables(t).archive_table_name IS NOT NULL
++                                    AND l_retentions(r).archive_after_days IS NULL THEN
++                                    RAISE_APPLICATION_ERROR(-20019,
++                                                            'Table has an archive_table_name, archive_after_days is required');
++                                END IF;
+                                 IF l_tables(t).scope_column IS NULL THEN
+                                     IF l_retentions(r).scope_value <> c_all_scopes THEN
+                                         RAISE_APPLICATION_ERROR(-20016,
+@@ -363,21 +388,26 @@
+                                     l_mode := c_scope_value;
+                                 END IF;
+ 
+-                                set_sql(NULL, NULL);
+-                                archive_rows(l_tables(t), l_retentions(r), l_mode, l_columns, l_archived);
+-                                log_write(pkg_process_log.c_info, l_run_id, l_owner, 'ARCHIVE', l_tables(t).table_name,
+-                                          l_retentions(r).scope_value,
+-                                          'Rows moved to ' || l_tables(t).archive_table_name || ' (dated before '
+-                                              || TO_CHAR(TRUNC(SYSDATE) - l_retentions(r).archive_after_days + 1,
+-                                                         'YYYY-MM-DD') || ')' || binds_suffix,
+-                                          l_archived, g_sql);
++                                IF l_tables(t).archive_table_name IS NULL THEN
++                                    l_archived := 0; -- purge-only table
++                                ELSE
++                                    set_sql(NULL, NULL);
++                                    archive_rows(l_tables(t), l_retentions(r), l_mode, l_columns, l_archived);
++                                    log_write(pkg_process_log.c_info, l_run_id, l_owner, 'ARCHIVE', l_tables(t).table_name,
++                                              l_retentions(r).scope_value,
++                                              'Rows moved to ' || l_tables(t).archive_table_name || ' (dated before '
++                                                  || TO_CHAR(TRUNC(SYSDATE) - l_retentions(r).archive_after_days + 1,
++                                                             'YYYY-MM-DD') || ')' || binds_suffix,
++                                              l_archived, g_sql);
++                                END IF;
+ 
+                                 set_sql(NULL, NULL);
+                                 purge_rows(l_tables(t), l_retentions(r), l_mode, l_purged);
+                                 log_write(pkg_process_log.c_info, l_run_id, l_owner, 'PURGE', l_tables(t).table_name,
+                                           l_retentions(r).scope_value,
+-                                          'Rows deleted from ' || l_tables(t).archive_table_name ||
+-                                          ' (archived before '
++                                          'Rows deleted from ' || NVL(l_tables(t).archive_table_name, l_tables(t).table_name)
++                                              || CASE WHEN l_tables(t).archive_table_name IS NULL
++                                                      THEN ' (dated before ' ELSE ' (archived before ' END
+                                               || TO_CHAR(TRUNC(SYSDATE) - l_retentions(r).purge_after_days + 1,
+                                                          'YYYY-MM-DD') || ')' || binds_suffix,
+                                           l_purged, g_sql);
